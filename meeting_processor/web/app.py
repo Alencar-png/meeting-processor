@@ -413,6 +413,19 @@ def create_app(config: Settings | None = None) -> FastAPI:
     app = FastAPI(title="Meeting Processor", version="1.1.0")
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
+    # Cache-busting: versão derivada do mtime dos estáticos. Muda sempre que
+    # app.css/app.js são editados, forçando o navegador a rebaixar (evita
+    # servir CSS/JS antigos do cache e "quebrar" o layout).
+    def _static_version() -> str:
+        latest = 0.0
+        for name in ("app.css", "app.js"):
+            f = STATIC_DIR / name
+            if f.exists():
+                latest = max(latest, f.stat().st_mtime)
+        return str(int(latest))
+
+    templates.env.globals["static_v"] = _static_version()
+
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 

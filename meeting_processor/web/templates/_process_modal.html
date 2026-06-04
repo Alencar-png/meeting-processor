@@ -1,0 +1,15 @@
+<div class="modal-backdrop" id="process-modal">
+  <div class="modal">
+    <header class="flex items-center justify-between px-5 py-4 border-b border-line">
+      <div class="flex items-center gap-2.5">
+        <span class="w-2 h-2 rounded-full bg-accent animate-pulse"></span>
+        <span class="font-semibold">Processando reunião</span>
+      </div>
+      <button class="btn btn-ghost modal-close" type="button">Fechar</button>
+    </header>
+
+    <div class="px-5 pt-3 text-xs text-mute font-mono truncate">{{ ps.file }}</div>
+
+    {% include "_process_steps.html" %}
+  </div>
+</div>

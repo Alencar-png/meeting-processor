@@ -46,7 +46,7 @@
 </div>
 
 <!-- Controles ao vivo -->
-<div id="controls" class="mb-6">
+<div class="mb-6">
   {% include "_controls.html" %}
 </div>
 
@@ -122,14 +122,15 @@
   <header class="px-5 py-4 border-b border-line">
     <h2 class="font-semibold text-sm uppercase tracking-wide text-mute">Processar arquivo manualmente</h2>
   </header>
-  <form method="post" action="/actions/process" class="p-4 flex flex-col sm:flex-row gap-3">
+  <form hx-post="/actions/process" hx-target="#modal-host" hx-swap="innerHTML"
+        class="p-4 flex flex-col sm:flex-row gap-3">
     <input
       type="text"
       name="file"
       placeholder="Caminho completo (ex: C:\Users\...\reuniao.mkv)"
       class="flex-1 bg-bg border border-line rounded px-3 py-2 font-mono text-sm focus:outline-none focus:border-accent"
       required />
-    <button class="btn btn-primary justify-center">Processar</button>
+    <button class="btn btn-primary justify-center" hx-disabled-elt="this">Processar</button>
   </form>
 </section>
 

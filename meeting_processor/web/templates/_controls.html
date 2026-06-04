@@ -1,4 +1,4 @@
-<div class="card p-5">
+<div id="controls" class="card p-5">
 
   {% if flash %}
     <div class="mb-4 px-3 py-2 rounded text-sm
@@ -33,14 +33,17 @@
 
       <div class="flex flex-wrap gap-2">
         {% if supervisor.running %}
-          <button hx-post="/actions/watcher/stop" hx-target="#controls" hx-swap="outerHTML" class="btn btn-err">
+          <button hx-post="/actions/watcher/stop" hx-target="#controls" hx-swap="outerHTML"
+                  hx-disabled-elt="this" class="btn btn-err">
             Parar
           </button>
-          <button hx-post="/actions/watcher/restart" hx-target="#controls" hx-swap="outerHTML" class="btn btn-ghost">
+          <button hx-post="/actions/watcher/restart" hx-target="#controls" hx-swap="outerHTML"
+                  hx-disabled-elt="this" class="btn btn-ghost">
             Reiniciar
           </button>
         {% else %}
-          <button hx-post="/actions/watcher/start" hx-target="#controls" hx-swap="outerHTML" class="btn btn-ok">
+          <button hx-post="/actions/watcher/start" hx-target="#controls" hx-swap="outerHTML"
+                  hx-disabled-elt="this" class="btn btn-ok">
             Iniciar
           </button>
         {% endif %}

@@ -404,9 +404,51 @@ details[open] > summary .chevron { transform:rotate(90deg); }
 @keyframes mp-pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
 .animate-pulse { animation:mp-pulse 1.8s cubic-bezier(.4,0,.6,1) infinite; }
 
-/* hx-boost: transição suave de página + indicador de carregamento */
+/* navegação/ações: transição de entrada + feedback de carregamento */
 @keyframes mp-fade { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+@keyframes mp-spin { to { transform:rotate(360deg); } }
 main > div:last-child { animation:mp-fade 180ms ease; }
-.htmx-request.htmx-indicator, .htmx-request .htmx-indicator { opacity:1; }
-#mp-progress { position:fixed; top:0; left:0; height:2px; width:0; background:linear-gradient(90deg,var(--accent),var(--accent-2)); z-index:60; transition:width .2s ease, opacity .3s ease; opacity:0; }
-body.htmx-request #mp-progress { width:75%; opacity:1; }
+
+/* barra de progresso global no topo (controlada por app.js via eventos htmx) */
+#mp-progress {
+  position:fixed; top:0; left:0; height:2px; width:0;
+  background:linear-gradient(90deg, var(--accent), var(--accent-2));
+  box-shadow:0 0 12px var(--accent); z-index:60;
+  transition:width .35s ease, opacity .4s ease; opacity:0;
+}
+body.mp-loading #mp-progress { width:82%; opacity:1; }
+
+/* spinner inline em botões durante a request + estado disabled */
+.btn.htmx-request { pointer-events:none; }
+.btn.htmx-request::before {
+  content:''; width:13px; height:13px; flex-shrink:0;
+  border:2px solid currentColor; border-right-color:transparent;
+  border-radius:50%; animation:mp-spin .6s linear infinite;
+}
+.btn:disabled, .btn[disabled] { opacity:.6; cursor:not-allowed; }
+
+/* modal de processamento */
+.modal-backdrop {
+  position:fixed; inset:0; z-index:70; display:flex; align-items:center; justify-content:center;
+  background:rgba(4,5,8,.66); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);
+  animation:mp-fade 160ms ease;
+}
+.modal {
+  width:min(94vw, 520px); background:var(--panel); border:1px solid var(--line);
+  border-radius:var(--radius); box-shadow:var(--shadow-pop); overflow:hidden;
+}
+.step-row { display:flex; align-items:center; gap:.7rem; padding:.55rem .25rem; }
+.step-dot {
+  width:20px; height:20px; border-radius:50%; flex-shrink:0; display:grid; place-items:center;
+  border:2px solid var(--line); color:var(--mute); font-size:.7rem; transition:all .25s ease;
+}
+.step-row[data-state="done"] .step-dot { background:var(--ok); border-color:var(--ok); color:#fff; }
+.step-row[data-state="active"] .step-dot { border-color:var(--accent); color:var(--accent-ink); position:relative; }
+.step-row[data-state="active"] .step-dot::after {
+  content:''; position:absolute; inset:-2px; border-radius:50%;
+  border:2px solid var(--accent); border-right-color:transparent; animation:mp-spin .7s linear infinite;
+}
+.step-row[data-state="error"] .step-dot { background:var(--err); border-color:var(--err); color:#fff; }
+.step-row[data-state="pending"] .step-label { color:var(--mute); }
+.step-row[data-state="active"] .step-label { color:var(--ink); font-weight:550; }
+.step-label { font-size:.9rem; transition:color .2s ease; }

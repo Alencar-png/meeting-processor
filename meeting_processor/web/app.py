@@ -47,6 +47,17 @@ WEB_DIR = Path(__file__).parent
 TEMPLATES_DIR = WEB_DIR / "templates"
 STATIC_DIR = WEB_DIR / "static"
 
+# Etapas do pipeline para o modal de progresso. (chave, rótulo)
+# audio/transcription rodam sempre; as demais dependem da config.
+PIPELINE_STAGES = [
+    ("audio", "Extraindo áudio"),
+    ("transcription", "Transcrevendo (Whisper)"),
+    ("summary", "Resumo (LLM)"),
+    ("note", "Nota no Obsidian"),
+    ("kanban", "Quadro Kanban"),
+    ("wiki", "Integração Wiki"),
+]
+
 
 def _attachment_response(body: str, filename: str, content_type: str) -> Response:
     """Resposta com Content-Disposition: attachment para forçar download."""
@@ -801,11 +812,70 @@ def create_app(config: Settings | None = None) -> FastAPI:
             },
         )
 
-    @app.post("/actions/process")
-    async def trigger_process(file: str = Form(...)):
+    def _build_steps(file_base: str) -> dict[str, Any]:
+        """Monta o estado das etapas para o modal de progresso."""
+        status = _read_status(config.vault_path, config.watch_dir)
+        steps_cfg = config.steps()
+
+        def enabled(key: str) -> bool:
+            return True if key in ("audio", "transcription") else steps_cfg.get(key, True)
+
+        job = next((j for j in status["active_jobs"] if j.get("file") == file_base), None)
+        done_entry = None
+        if job is None:
+            done_entry = next((h for h in status["history"] if h.get("file") == file_base), None)
+
+        rows = []
+        if job is not None:
+            state = "processing"
+            cur = job.get("stage", 0)
+            for i, (key, label) in enumerate(PIPELINE_STAGES):
+                st = "skipped" if not enabled(key) else ("done" if i < cur else "active" if i == cur else "pending")
+                rows.append({"label": label, "state": st})
+        elif done_entry is not None:
+            err = done_entry.get("status") == "error"
+            state = "error" if err else "done"
+            failed = done_entry.get("stage", len(PIPELINE_STAGES))
+            for i, (key, label) in enumerate(PIPELINE_STAGES):
+                if not enabled(key):
+                    st = "skipped"
+                elif err and i == failed:
+                    st = "error"
+                elif err and i > failed:
+                    st = "pending"
+                else:
+                    st = "done"
+                rows.append({"label": label, "state": st})
+        else:
+            state = "starting"
+            for key, label in PIPELINE_STAGES:
+                rows.append({"label": label, "state": "pending" if enabled(key) else "skipped"})
+
+        return {
+            "file": file_base,
+            "state": state,
+            "steps": rows,
+            "result": (done_entry or {}).get("details", {}).get("result", "") if done_entry else "",
+            "error_message": (done_entry or {}).get("error_message", "") if done_entry else "",
+        }
+
+    @app.get("/fragments/process-steps", response_class=HTMLResponse)
+    async def process_steps_fragment(request: Request, file: str = ""):
+        return templates.TemplateResponse(
+            request, "_process_steps.html", {"ps": _build_steps(Path(file).name)}
+        )
+
+    @app.post("/actions/process", response_class=HTMLResponse)
+    async def trigger_process(request: Request, file: str = Form(...)):
         path = Path(file)
         if not path.exists():
-            raise HTTPException(status_code=400, detail=f"Arquivo não encontrado: {file}")
+            return templates.TemplateResponse(
+                request,
+                "_process_modal.html",
+                {"ps": {"file": file, "state": "error", "steps": [],
+                        "result": "", "error_message": f"Arquivo não encontrado: {file}"}},
+                status_code=400,
+            )
 
         def _run():
             try:
@@ -817,7 +887,9 @@ def create_app(config: Settings | None = None) -> FastAPI:
                 logger.exception("Falha ao processar via web")
 
         threading.Thread(target=_run, daemon=True).start()
-        return RedirectResponse(url="/dashboard", status_code=303)
+        return templates.TemplateResponse(
+            request, "_process_modal.html", {"ps": _build_steps(path.name)}
+        )
 
     @app.post("/actions/meetings/{meeting_id}/delete")
     async def delete_meeting_action(meeting_id: str):

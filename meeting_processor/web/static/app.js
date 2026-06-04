@@ -28,8 +28,19 @@
     if (bd) bd.classList.add('hidden');
   }
 
+  /* ---------- Modal ----------------------------------------- */
+  function closeModal() {
+    var m = document.getElementById('process-modal');
+    if (m) m.remove();
+  }
+
   /* ---------- Delegação global de cliques -------------------- */
   document.addEventListener('click', function (e) {
+    // Fecha o modal: clique no fundo (backdrop) ou no botão "Fechar"
+    if (e.target.id === 'process-modal' || e.target.closest('.modal-close')) {
+      closeModal();
+      return;
+    }
     var t = e.target.closest('[data-action]');
     if (!t) return;
     var action = t.dataset.action;
@@ -37,6 +48,8 @@
     else if (action === 'toggle-sidebar') { toggleSidebar(); }
     else if (action === 'close-sidebar') { closeSidebar(); }
   });
+  // ESC fecha o modal
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
 
   /* ---------- Toast ----------------------------------------- */
   function toast(msg, type) {
@@ -94,6 +107,28 @@
     return confirm('Remover do histórico?\n\n' + title +
       '\n\nApenas o registro é apagado. Não afeta arquivos no vault.');
   };
+
+  /* ---------- Barra de progresso global (ações do usuário) --- */
+  // Ignora o polling automático do status (#status, a cada 5s) para a
+  // barra não ficar piscando sem o usuário ter feito nada.
+  function isSilent(evt) {
+    var e = evt.detail && evt.detail.elt;
+    return !!(e && (e.id === 'status' || (e.closest && e.closest('[data-silent]'))));
+  }
+  var pending = 0;
+  function reqStart(evt) {
+    if (isSilent(evt)) return;
+    pending++; document.body.classList.add('mp-loading');
+  }
+  function reqDone(evt) {
+    if (evt && isSilent(evt)) return;
+    pending = Math.max(0, pending - 1);
+    if (pending === 0) document.body.classList.remove('mp-loading');
+  }
+  document.addEventListener('htmx:beforeRequest', reqStart);
+  document.addEventListener('htmx:afterRequest', reqDone);
+  document.addEventListener('htmx:responseError', reqDone);
+  document.addEventListener('htmx:sendError', reqDone);
 
   /* ---------- Inicialização (load + cada navegação boost) --- */
   function boot() { initKanban(); }

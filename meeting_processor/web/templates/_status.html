@@ -107,16 +107,3 @@
     </div>
   {% endif %}
 </div>
-
-<script>
-  // Definida apenas uma vez por página, mesmo com múltiplos refreshes do fragmento
-  if (typeof window.confirmRemoveHistoryStatus !== 'function') {
-    window.confirmRemoveHistoryStatus = function (form) {
-      var title = form.dataset.meetingTitle || 'esta entrada';
-      return confirm(
-        'Remover esta entrada do histórico?\n\n' + title +
-        '\n\nApenas o registro do erro é apagado. Não afeta arquivos no vault.'
-      );
-    };
-  }
-</script>

@@ -12,50 +12,22 @@
         var saved = localStorage.getItem('mp-theme');
         if (saved === 'light') document.documentElement.classList.remove('dark');
         else document.documentElement.classList.add('dark');
-      } catch (e) { /* ignore */ }
+      } catch (e) {}
     })();
   </script>
 
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="/static/app.css" />
   <script src="https://unpkg.com/htmx.org@1.9.10" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js" defer></script>
-  <link rel="stylesheet" href="/static/app.css" />
-
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            // Dark
-            bg:        '#0a0c12',
-            panel:     '#10131c',
-            'panel-2': '#161a26',
-            line:      '#1e2333',
-            ink:       '#e7e9f0',
-            mute:      '#8b93a7',
-            // Acentos
-            accent:    '#7c5cff',
-            'accent-2':'#a78bfa',
-            ok:        '#22c55e',
-            warn:      '#f59e0b',
-            err:       '#ef4444',
-            info:      '#3b82f6',
-            // Light overrides via CSS vars (definidos em app.css)
-          },
-          fontFamily: {
-            sans: ['Inter','system-ui','-apple-system','Segoe UI','Roboto','sans-serif'],
-            mono: ['JetBrains Mono','Consolas','Menlo','monospace'],
-          },
-          boxShadow: {
-            'soft': '0 1px 2px rgba(0,0,0,.2), 0 8px 24px -8px rgba(124,92,255,.15)',
-          },
-        }
-      }
-    }
-  </script>
+  <script src="/static/app.js" defer></script>
 </head>
-<body class="bg-bg text-ink font-sans min-h-screen antialiased">
+<body class="bg-bg text-ink font-sans min-h-screen antialiased" hx-boost="true">
+
+  <div id="mp-progress"></div>
 
   <div class="flex min-h-screen">
 
@@ -64,13 +36,13 @@
     <!-- Conteúdo principal -->
     <main class="flex-1 min-w-0 lg:ml-64">
 
-      <!-- Topbar mobile / breadcrumb -->
+      <!-- Topbar / breadcrumb -->
       <div class="sticky top-0 z-10 bg-bg/85 backdrop-blur border-b border-line">
         <div class="px-4 lg:px-8 py-3 flex items-center justify-between gap-4">
           <button
-            id="sidebar-toggle"
+            data-action="toggle-sidebar"
             class="lg:hidden p-2 rounded hover:bg-panel transition"
-            onclick="document.getElementById('sidebar').classList.toggle('-translate-x-full')">
+            aria-label="Menu">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
           </button>
 
@@ -81,11 +53,11 @@
 
           <div class="flex items-center gap-2">
             <button
-              onclick="toggleTheme()"
+              data-action="toggle-theme"
               class="p-2 rounded hover:bg-panel transition text-mute hover:text-ink"
-              title="Alternar tema">
+              title="Alternar tema" aria-label="Alternar tema">
               <svg class="w-5 h-5 dark:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-              <svg class="w-5 h-5 hidden dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+              <svg class="w-5 h-5 dark:block" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
             </button>
           </div>
         </div>
@@ -97,19 +69,6 @@
     </main>
 
   </div>
-
-  <script>
-    function toggleTheme() {
-      var html = document.documentElement;
-      if (html.classList.contains('dark')) {
-        html.classList.remove('dark');
-        localStorage.setItem('mp-theme', 'light');
-      } else {
-        html.classList.add('dark');
-        localStorage.setItem('mp-theme', 'dark');
-      }
-    }
-  </script>
 
 </body>
 </html>

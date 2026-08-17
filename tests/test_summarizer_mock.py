@@ -51,12 +51,14 @@ def test_factory_selects_ollama() -> None:
     print("OK  factory -> OllamaSummarizer (env=local)")
 
 
-def test_factory_selects_anthropic() -> None:
-    os.environ["MEETING_LLM_PROVIDER"] = "anthropic"
+def test_factory_selects_anthropic(monkeypatch) -> None:
+    monkeypatch.setenv("MEETING_LLM_PROVIDER", "anthropic")
+    # Chave falsa: o construtor exige uma, e o teste não pode depender de haver
+    # um .env na máquina — no CI não há.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-teste")
     cfg = load_config()
     s = MeetingSummarizer(cfg)
     assert isinstance(s, AnthropicSummarizer), type(s).__name__
-    print("OK  factory -> AnthropicSummarizer (env=anthropic)")
 
 
 def test_ollama_happy_path() -> None:

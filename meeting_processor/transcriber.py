@@ -2,8 +2,11 @@
 
 import json
 import logging
+import os
+import re
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 from .config import Settings
@@ -17,7 +20,18 @@ logger = logging.getLogger(__name__)
 # casaria com programas não relacionados (ex.: main.CPL no Windows).
 _CLI_NAMES_PATH = ("whisper-cli", "whisper-cpp")
 # Nomes aceitos dentro de .whisper-cpp/ no projeto, onde o contexto é claro.
-_CLI_NAMES_LOCAL = ("whisper-cli", "whisper-cpp", "main")
+# "main" ficou de fora de propósito: nas versões atuais do whisper.cpp ele é
+# apenas um stub que imprime aviso de depreciação e sai com sucesso — se fosse
+# aceito, a transcrição "passaria" sem produzir nada.
+_CLI_NAMES_LOCAL = ("whisper-cli", "whisper-cpp")
+
+# Linha de progresso do whisper.cpp com --print-progress:
+#   whisper_print_progress_callback: progress =  45%
+_PROGRESS_RE = re.compile(r"progress\s*=\s*(\d+)\s*%")
+
+# Device Vulkan escolhido pelo whisper.cpp:
+#   ggml_vulkan: 0 = AMD Radeon RX 9060 XT (AMD proprietary driver) | uma: 0 |
+_VULKAN_DEVICE_RE = re.compile(r"ggml_vulkan:\s*\d+\s*=\s*([^|]+?)\s*\|")
 
 
 def resolve_whisper_cli(config: Settings) -> Path | None:
@@ -73,6 +87,22 @@ class WhisperTranscriber:
 
     def __init__(self, config: Settings):
         self.config = config
+        # Cache do modelo openai-whisper em memória — evita recarregar o
+        # modelo do disco (segundos a dezenas de segundos) a cada reunião.
+        self._openai_model = None
+        self._openai_model_key: tuple[str, str | None] | None = None
+
+    def _resolve_device(self) -> str | None:
+        """Device do Whisper. 'auto'/'' => None (deixa a lib decidir)."""
+        dev = (self.config.whisper_device or "auto").lower().strip()
+        return None if dev in ("auto", "") else dev
+
+    def _resolve_threads(self) -> int:
+        """Threads do whisper.cpp: config explícita ou todos os núcleos."""
+        configured = self.config.whisper_threads
+        if configured and configured > 0:
+            return configured
+        return os.cpu_count() or 4
 
     def transcribe(self, audio_path: Path, progress_callback=None) -> Transcript:
         """Transcreve um arquivo de áudio escolhendo o backend disponível."""
@@ -102,13 +132,23 @@ class WhisperTranscriber:
 
         if progress_callback:
             progress_callback(5, f"Carregando modelo {self.config.whisper_model}...")
-        logger.info(
-            "Transcrevendo %s com openai-whisper (modelo=%s)...",
-            audio_path.name,
-            self.config.whisper_model,
-        )
 
-        model = whisper.load_model(self.config.whisper_model)
+        device = self._resolve_device()
+        key = (self.config.whisper_model, device)
+        if self._openai_model is not None and self._openai_model_key == key:
+            model = self._openai_model  # reaproveita o modelo já em memória
+            logger.info(
+                "Transcrevendo %s com openai-whisper (modelo=%s, cache)...",
+                audio_path.name, self.config.whisper_model,
+            )
+        else:
+            logger.info(
+                "Carregando openai-whisper (modelo=%s, device=%s)...",
+                self.config.whisper_model, device or "auto",
+            )
+            model = whisper.load_model(self.config.whisper_model, device=device)
+            self._openai_model = model
+            self._openai_model_key = key
         if progress_callback:
             progress_callback(15, "Transcrevendo áudio...")
 
@@ -148,6 +188,93 @@ class WhisperTranscriber:
 
     # -- Backend: whisper.cpp (binário) --------------------------------------
 
+    def _run_whisper_cli(
+        self, cmd: list[str], audio_path: Path, progress_callback=None
+    ) -> tuple[str, str]:
+        """Executa o whisper-cli lendo o progresso do stderr em tempo real.
+
+        O JSON com os segmentos sai inteiro no stdout no fim; o stderr traz
+        ``progress = NN%`` durante a execução. Por isso os dois fluxos são
+        lidos separadamente, em vez de um ``subprocess.run`` que só entrega
+        tudo no final.
+
+        Returns:
+            (stdout, stderr) do processo.
+        """
+        timeout = self.config.whisper_timeout
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+        stderr_parts: list[str] = []
+
+        def pump_stderr() -> None:
+            for line in proc.stderr:
+                stderr_parts.append(line)
+
+                device = _VULKAN_DEVICE_RE.search(line)
+                if device:
+                    # Deixa explícito onde a transcrição está rodando: sem isso,
+                    # cair para CPU passa despercebido e só aparece como lentidão.
+                    logger.info("whisper.cpp usando GPU: %s", device.group(1))
+                    if progress_callback:
+                        progress_callback(10, f"GPU: {device.group(1)}")
+
+                match = _PROGRESS_RE.search(line)
+                if match and progress_callback:
+                    # 10-99: a faixa abaixo de 10 é o carregamento do modelo e
+                    # 100 só é reportado quando os segmentos estão prontos.
+                    pct = int(match.group(1))
+                    progress_callback(
+                        min(99, 10 + int(pct * 0.89)), "Transcrevendo áudio..."
+                    )
+
+        reader = threading.Thread(target=pump_stderr, daemon=True)
+        reader.start()
+
+        # Watchdog: um whisper travado congelaria a leitura do stdout para
+        # sempre, e com ela o worker inteiro.
+        timed_out = threading.Event()
+
+        def on_timeout() -> None:
+            timed_out.set()
+            proc.kill()
+
+        killer = threading.Timer(timeout, on_timeout)
+        killer.daemon = True
+        killer.start()
+        try:
+            stdout = proc.stdout.read()
+            returncode = proc.wait()
+        finally:
+            killer.cancel()
+            reader.join(timeout=5)
+            proc.stdout.close()
+            proc.stderr.close()
+
+        stderr = "".join(stderr_parts)
+
+        if returncode != 0:
+            if timed_out.is_set():
+                logger.error(
+                    "whisper-cli excedeu o tempo limite (%.0fs) em %s",
+                    timeout,
+                    audio_path.name,
+                )
+                raise RuntimeError(
+                    f"Transcrição excedeu o tempo limite ({timeout:.0f}s) "
+                    f"em {audio_path.name}."
+                )
+            logger.error("Erro no whisper-cli: %s", stderr[:500])
+            raise RuntimeError(f"whisper-cli falhou: {stderr[:200]}")
+
+        return stdout, stderr
+
     def _transcribe_cpp(self, audio_path: Path, progress_callback=None) -> Transcript:
         cli = resolve_whisper_cli(self.config)
         if cli is None:
@@ -179,26 +306,26 @@ class WhisperTranscriber:
             "-oj",          # output JSON
             "--no-prints",  # sem logs extras no stdout
         ]
+        # Sem -t explícito o whisper.cpp fica em 4 threads, independentemente
+        # do tamanho da CPU.
+        cmd += ["-t", str(self._resolve_threads())]
+        # whisper.cpp usa a GPU automaticamente quando o binário tem suporte.
+        # device=cpu força o uso de CPU explicitamente.
+        if self._resolve_device() == "cpu":
+            cmd.append("--no-gpu")
+        if progress_callback:
+            # Progresso real da etapa mais longa do pipeline, em vez de uma
+            # barra parada do começo ao fim.
+            cmd.append("--print-progress")
 
         if progress_callback:
             progress_callback(10, "Transcrevendo áudio...")
 
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-        except subprocess.CalledProcessError as e:
-            logger.error("Erro no whisper-cli: %s", e.stderr[:500])
-            raise RuntimeError(f"whisper-cli falhou: {e.stderr[:200]}") from e
+        stdout, stderr = self._run_whisper_cli(cmd, audio_path, progress_callback)
 
         # Parse JSON output
         try:
-            data = json.loads(result.stdout)
+            data = json.loads(stdout)
         except json.JSONDecodeError:
             # Fallback: tentar encontrar o arquivo JSON gerado
             json_path = audio_path.with_suffix(".wav.json")
@@ -206,7 +333,9 @@ class WhisperTranscriber:
                 data = json.loads(json_path.read_text(encoding="utf-8"))
                 json_path.unlink()
             else:
-                raise RuntimeError("whisper-cli nao gerou saida JSON valida")
+                raise RuntimeError(
+                    f"whisper-cli nao gerou saida JSON valida: {stderr[:200]}"
+                ) from None
 
         # Extrair segmentos
         segments = []

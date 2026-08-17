@@ -82,8 +82,8 @@ MEETING_LLM_PROVIDER=anthropic
 
 - O log no terminal imprime no início:
   `LLM provider: ollama (modelo=qwen2.5:14b, base_url=http://localhost:11434)`
-- O frontend local mostra o provedor no card "Provedor LLM" em `/`.
-- A página `/settings` lista todos os parâmetros.
+- O provedor efetivo e todos os parâmetros saem do `config.yaml` +
+  variáveis de ambiente (ver `meeting_processor/config.py`).
 
 ---
 

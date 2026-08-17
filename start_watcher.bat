@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM Meeting Processor - inicia watcher + servidor de controle
+REM Meeting Processor - inicia o watcher (monitora a pasta do OBS)
 REM ============================================================
 
 title Meeting Processor - Watcher
@@ -17,5 +17,5 @@ if errorlevel 1 (
     exit /b 1
 )
 
-python -m meeting_processor serve
+python -m meeting_processor watch
 pause

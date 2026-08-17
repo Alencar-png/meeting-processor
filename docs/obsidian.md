@@ -42,23 +42,19 @@ vault/wiki/reunioes/2026-05-07 14h30 - Reuniao com X/
 Você pode renomear a pasta (e o `.md` central de mesmo nome) sem quebrar
 nada — o grafo do Obsidian acompanha.
 
-## 5. Dashboard ao vivo no Obsidian
+## 5. Acompanhar o processamento
 
-Enquanto o watcher roda (`python -m meeting_processor watch`), o arquivo
-`vault/wiki/reunioes/Dashboard.md` é atualizado em tempo real com:
+O sistema é headless: o progresso aparece no console do watcher e em
+`meeting_processor.log`. O estado de cada job também fica na tabela `jobs`
+do SQLite (`meeting_processor.db`), consultável por script:
 
-- Status do watcher (ATIVO/OFFLINE).
-- Job em processamento, com barra de progresso por etapa.
-- Histórico das últimas execuções.
-
-Abra esse arquivo no Obsidian e deixe num painel lateral.
+```bash
+sqlite3 meeting_processor.db \
+  "SELECT file, status, stage, progress, detail FROM jobs ORDER BY id DESC LIMIT 10;"
+```
 
 ## 6. Não usar Obsidian
 
-Se preferir não instalar Obsidian, use o frontend local:
-
-```bash
-python -m meeting_processor web
-```
-
-Veja [`frontend-local.md`](frontend-local.md).
+O Obsidian é opcional: as notas são Markdown puro e podem ser lidas por
+qualquer editor. Sem ele, o Kanban (`Tarefas - *.md`) fica como uma lista
+de checkboxes comum.

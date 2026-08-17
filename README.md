@@ -115,6 +115,13 @@ serviço compatível com a API da OpenAI: basta trocar `MEETING_OPENAI_BASE_URL`
 
 ### App desktop — solte o vídeo e pronto
 
+Clique duas vezes em **`Meeting Processor (sem console).vbs`** na raiz do
+projeto. Na primeira vez ele instala as dependências do app; depois abre
+direto, sem janela de console. O **`Meeting Processor.bat`** faz o mesmo
+mostrando as mensagens, útil quando algo dá errado.
+
+Pela linha de comando:
+
 ```bash
 cd desktop && npm install && npm start
 ```

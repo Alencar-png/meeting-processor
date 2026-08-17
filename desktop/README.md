@@ -52,11 +52,18 @@ cp .whisper-cpp/src/build/bin/Release/*.exe .whisper-cpp/src/build/bin/Release/*
 
 ## Rodar
 
+Clique duas vezes em `Meeting Processor (sem console).vbs`, na raiz do projeto.
+Ou, pela linha de comando:
+
 ```bash
 cd desktop
 npm install
 npm start
 ```
+
+Ainda **não há um instalador `.exe`**: o app roda a partir do repositório, com
+o Node.js instalado. Empacotar com electron-builder é possível, mas o motor GPU
+depende do Python e do whisper.cpp do projeto, que ficariam fora do pacote.
 
 ## O que dá para ajustar
 

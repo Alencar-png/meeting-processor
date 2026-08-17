@@ -1,0 +1,113 @@
+'use strict';
+
+/**
+ * Os dois motores de transcrição do app.
+ *
+ *   nativo  — Python do host + whisper.cpp com Vulkan. Usa a GPU, é o rápido.
+ *   docker  — container CPU-only. Portátil, não depende de nada instalado.
+ *
+ * Ambos falam o mesmo protocolo (eventos JSONL no stdout), então o resto do
+ * app não precisa saber qual está em uso.
+ */
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { IMAGE_NAME, MODELS_VOLUME, buildDockerArgs, toHostPath } = require('./docker-args');
+
+/** Onde o whisper.cpp e os modelos GGML ficam dentro do projeto. */
+function nativePaths(projectRoot) {
+  return {
+    cliCandidates: [
+      path.join(projectRoot, '.whisper-cpp', 'whisper-cli.exe'),
+      path.join(projectRoot, '.whisper-cpp', 'whisper-cli'),
+    ],
+    pythonCandidates: [
+      path.join(projectRoot, '.venv', 'Scripts', 'python.exe'),
+      path.join(projectRoot, '.venv', 'bin', 'python'),
+      'python',
+    ],
+    modelsDir: path.join(projectRoot, '.models'),
+  };
+}
+
+/** Primeiro caminho que existe, ou o último candidato (resolvido pelo PATH). */
+function firstExisting(candidates) {
+  return candidates.find((c) => !c.includes(path.sep) || fs.existsSync(c)) || null;
+}
+
+/** Modelos GGML disponíveis, do menor para o maior. */
+function listNativeModels(projectRoot) {
+  const dir = nativePaths(projectRoot).modelsDir;
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.bin'))
+    .map((f) => {
+      const full = path.join(dir, f);
+      return {
+        // "ggml-large-v3-turbo.bin" vira "large-v3-turbo"
+        id: f.replace(/^ggml-/, '').replace(/\.bin$/, ''),
+        path: full,
+        sizeMB: Math.round(fs.statSync(full).size / 1048576),
+      };
+    })
+    .sort((a, b) => a.sizeMB - b.sizeMB);
+}
+
+/** Estado do motor nativo: o que existe e o que falta. */
+function nativeStatus(projectRoot) {
+  const paths = nativePaths(projectRoot);
+  const cli = paths.cliCandidates.find((c) => fs.existsSync(c)) || null;
+  const models = listNativeModels(projectRoot);
+  return {
+    ok: Boolean(cli) && models.length > 0,
+    cli,
+    python: firstExisting(paths.pythonCandidates),
+    models,
+    message: !cli
+      ? 'whisper-cli não encontrado em .whisper-cpp/'
+      : models.length === 0
+        ? 'nenhum modelo .bin em .models/'
+        : '',
+  };
+}
+
+/** Argumentos do Python para transcrever no host. */
+function buildNativeArgs({ videoPath, outputDir, formats, name = '' }) {
+  return [
+    '-m', 'meeting_processor', 'transcribe', videoPath,
+    '--output-dir', outputDir,
+    '--formats', formats.join(','),
+    ...(name ? ['--name', name] : []),
+    '--json',
+  ];
+}
+
+/**
+ * Variáveis que apontam o pipeline para o whisper.cpp local.
+ *
+ * O modelo é escolhido por caminho (não por nome): no backend whisper.cpp o
+ * que vale é o arquivo .bin, e é ele que a UI lista.
+ */
+function buildNativeEnv({ cli, modelPath, language, threads }) {
+  return {
+    MEETING_WHISPER_BACKEND: 'cpp',
+    MEETING_WHISPER_CLI_PATH: cli,
+    MEETING_WHISPER_MODEL_PATH: modelPath,
+    MEETING_WHISPER_LANGUAGE: language,
+    MEETING_WHISPER_DEVICE: 'auto', // deixa o whisper.cpp usar a GPU
+    MEETING_WHISPER_THREADS: String(threads || 0),
+  };
+}
+
+module.exports = {
+  IMAGE_NAME,
+  MODELS_VOLUME,
+  buildDockerArgs,
+  toHostPath,
+  buildNativeArgs,
+  buildNativeEnv,
+  listNativeModels,
+  nativeStatus,
+};

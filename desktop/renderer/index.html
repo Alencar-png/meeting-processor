@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'" />
+  <title>Meeting Processor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app" id="app" data-state="idle">
+
+    <header class="bar">
+      <p class="wordmark">Meeting <em>Processor</em></p>
+      <button class="engine" id="engine" type="button" data-ok="false"
+              title="Alternar entre GPU e Docker">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="engine-text">verificando o motor…</span>
+      </button>
+    </header>
+
+    <div class="body">
+    <aside class="sidebar" aria-label="Transcrições anteriores">
+      <div class="sidebar-head">
+        <span class="label">Transcrições</span>
+        <span class="count" id="library-count">0</span>
+        <button class="sidebar-toggle" id="view-table" type="button"
+                title="Ver como tabela">tabela</button>
+      </div>
+      <ul class="library" id="library"></ul>
+      <p class="sidebar-empty" id="library-empty">Nenhuma transcrição ainda.</p>
+    </aside>
+
+    <main class="stage" id="stage" tabindex="0" aria-label="Área para soltar o vídeo">
+      <canvas class="wave" id="wave" aria-hidden="true"></canvas>
+
+      <div class="panel panel-idle">
+        <h1 class="display">Solte o vídeo aqui</h1>
+        <p class="lede">ou <button class="link" id="pick-video" type="button">escolha um arquivo</button></p>
+      </div>
+
+      <div class="panel panel-drop">
+        <h1 class="display">Pode soltar</h1>
+        <p class="lede">você confirma o nome antes de começar</p>
+      </div>
+
+      <div class="panel panel-confirm">
+        <p class="filename" id="confirm-file">arquivo.mkv</p>
+        <h1 class="display">Como chamar esta reunião?</h1>
+        <p class="lede">O nome vira a pasta que guarda a transcrição e os documentos.</p>
+        <form class="rename" id="confirm-form">
+          <input class="rename-input" id="confirm-input" type="text"
+                 aria-label="Nome da reunião" autocomplete="off" />
+          <button class="solid" type="submit">Transcrever</button>
+          <button class="ghost" type="button" id="confirm-cancel">Cancelar</button>
+        </form>
+        <p class="detail" id="confirm-error"></p>
+      </div>
+
+      <div class="panel panel-working">
+        <p class="filename" id="working-file">arquivo.mkv</p>
+        <h1 class="display" id="working-stage">Extraindo áudio</h1>
+        <p class="readout">
+          <span class="pct" id="working-pct">0%</span>
+          <span class="sep" aria-hidden="true">/</span>
+          <span class="clock" id="working-clock">00:00</span>
+        </p>
+        <p class="detail" id="working-detail"></p>
+        <button class="ghost" id="cancel" type="button">Cancelar</button>
+      </div>
+
+      <div class="panel panel-done">
+        <h1 class="display">Transcrição pronta</h1>
+        <p class="readout">
+          <span class="clock" id="done-summary">00:00 de áudio</span>
+        </p>
+        <ul class="files" id="files"></ul>
+        <div class="actions">
+          <button class="solid" id="done-tarefas" type="button">Gerar tarefas</button>
+          <button class="solid" id="done-resumo" type="button">Resumo executivo</button>
+        </div>
+        <div class="actions">
+          <button class="ghost" id="open-folder" type="button">Abrir pasta</button>
+          <button class="ghost" id="again" type="button">Transcrever outro</button>
+        </div>
+      </div>
+
+      <div class="panel panel-detail">
+        <p class="filename" id="detail-date">—</p>
+        <h1 class="display" id="detail-name">Transcrição</h1>
+
+        <dl class="meta" id="detail-meta"></dl>
+
+        <form class="rename" id="rename-form" hidden>
+          <input class="rename-input" id="rename-input" type="text"
+                 aria-label="Novo nome da transcrição" autocomplete="off" />
+          <button class="solid" type="submit">Salvar</button>
+          <button class="ghost" type="button" id="rename-cancel">Cancelar</button>
+        </form>
+        <p class="detail" id="detail-error"></p>
+
+        <div class="toolbar" role="toolbar" aria-label="Ações da transcrição">
+          <button class="tool" id="detail-view" type="button">Visualizar</button>
+          <button class="tool" id="detail-download" type="button">Baixar</button>
+          <button class="tool" id="detail-tarefas" type="button">Gerar tarefas</button>
+          <button class="tool" id="detail-resumo" type="button">Resumo executivo</button>
+          <button class="tool" id="detail-rename" type="button">Renomear</button>
+          <button class="tool tool-danger" id="detail-delete" type="button">Excluir</button>
+        </div>
+
+        <ul class="files" id="detail-files"></ul>
+        <button class="ghost" id="detail-back" type="button">Voltar</button>
+      </div>
+
+      <div class="panel panel-viewer">
+        <p class="filename" id="viewer-file">transcrição</p>
+        <h1 class="display" id="viewer-name">Transcrição</h1>
+        <div class="toolbar" role="toolbar" aria-label="Ações da leitura">
+          <input class="search search-inline" id="viewer-search" type="search"
+                 placeholder="Buscar no texto" aria-label="Buscar no texto" />
+          <button class="tool" id="viewer-download" type="button">Baixar</button>
+          <button class="tool" id="viewer-close" type="button">Fechar</button>
+        </div>
+        <pre class="reader" id="viewer-text"></pre>
+      </div>
+
+      <div class="panel panel-table">
+        <h1 class="display">Transcrições</h1>
+        <div class="toolbar" role="toolbar" aria-label="Filtros da tabela">
+          <input class="search" id="table-search" type="search"
+                 placeholder="Buscar por nome ou arquivo" aria-label="Buscar" />
+          <select class="tool select-tool" id="table-filter" aria-label="Filtrar">
+            <option value="todas">todas</option>
+            <option value="com-tarefas">com tarefas</option>
+            <option value="sem-tarefas">sem tarefas</option>
+            <option value="com-resumo">com resumo</option>
+            <option value="sem-resumo">sem resumo</option>
+          </select>
+          <button class="tool" id="table-close" type="button">Fechar</button>
+        </div>
+        <div class="table-wrap">
+          <table class="datatable" id="table">
+            <thead>
+              <tr>
+                <th data-sort="name">Reunião</th>
+                <th data-sort="recorded">Gravado em</th>
+                <th data-sort="duration">Duração</th>
+                <th data-sort="segments">Falas</th>
+                <th data-sort="model">Modelo</th>
+                <th data-sort="docs">Documentos</th>
+              </tr>
+            </thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+        <p class="detail" id="table-empty"></p>
+      </div>
+
+      <div class="panel panel-doc">
+        <p class="filename" id="doc-target">—</p>
+        <h1 class="display" id="doc-title">Gerando tarefas</h1>
+        <p class="readout">
+          <span class="pct" id="doc-activity">iniciando</span>
+          <span class="sep" aria-hidden="true">/</span>
+          <span class="clock" id="doc-clock">00:00</span>
+        </p>
+        <p class="detail">O Claude está lendo a reunião e montando o PDF.</p>
+        <button class="ghost" id="doc-cancel" type="button">Cancelar</button>
+      </div>
+
+      <div class="panel panel-error">
+        <h1 class="display">Não deu para transcrever</h1>
+        <p class="lede" id="error-message">Erro desconhecido.</p>
+        <button class="ghost" id="retry" type="button">Voltar</button>
+      </div>
+
+      <div class="panel panel-blocked">
+        <h1 class="display">Falta o motor de transcrição</h1>
+        <p class="lede" id="blocked-message">A imagem de transcrição ainda não foi construída.</p>
+        <div class="actions">
+          <button class="solid" id="build" type="button">Construir imagem</button>
+          <button class="ghost" id="recheck" type="button">Verificar de novo</button>
+        </div>
+        <pre class="log" id="build-log" aria-live="polite"></pre>
+      </div>
+    </main>
+    </div>
+
+    <footer class="controls">
+      <button class="control control-wide" id="output-dir" type="button">
+        <span class="label">Salvar em</span>
+        <span class="value" id="output-dir-value">…</span>
+      </button>
+
+      <label class="control">
+        <span class="label">Modelo</span>
+        <select class="value select" id="model"></select>
+      </label>
+
+      <label class="control">
+        <span class="label">Idioma</span>
+        <select class="value select" id="language">
+          <option value="pt">português</option>
+          <option value="en">inglês</option>
+          <option value="es">espanhol</option>
+          <option value="auto">detectar</option>
+        </select>
+      </label>
+    </footer>
+  </div>
+
+  <script src="wave.js"></script>
+  <script src="library-ui.js"></script>
+  <script src="table-ui.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

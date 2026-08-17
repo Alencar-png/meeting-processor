@@ -77,7 +77,7 @@
         <ul class="files" id="files"></ul>
         <div class="actions">
           <button class="solid" id="done-tarefas" type="button">Gerar tarefas</button>
-          <button class="solid" id="done-resumo" type="button">Resumo executivo</button>
+          <button class="solid" id="done-resumo" type="button">Gerar resumo</button>
         </div>
         <div class="actions">
           <button class="ghost" id="open-folder" type="button">Abrir pasta</button>
@@ -91,6 +91,14 @@
 
         <dl class="meta" id="detail-meta"></dl>
 
+        <div class="group-row">
+          <span class="label">Projeto</span>
+          <select class="value select" id="detail-group" aria-label="Projeto da reunião">
+            <option value="">sem projeto</option>
+          </select>
+          <button class="tool" id="manage-groups" type="button">Gerenciar projetos</button>
+        </div>
+
         <form class="rename" id="rename-form" hidden>
           <input class="rename-input" id="rename-input" type="text"
                  aria-label="Novo nome da transcrição" autocomplete="off" />
@@ -103,7 +111,7 @@
           <button class="tool" id="detail-view" type="button">Visualizar</button>
           <button class="tool" id="detail-download" type="button">Baixar</button>
           <button class="tool" id="detail-tarefas" type="button">Gerar tarefas</button>
-          <button class="tool" id="detail-resumo" type="button">Resumo executivo</button>
+          <button class="tool" id="detail-resumo" type="button">Gerar resumo</button>
           <button class="tool" id="detail-rename" type="button">Renomear</button>
           <button class="tool tool-danger" id="detail-delete" type="button">Excluir</button>
         </div>
@@ -136,6 +144,9 @@
             <option value="com-resumo">com resumo</option>
             <option value="sem-resumo">sem resumo</option>
           </select>
+          <select class="tool select-tool" id="table-group" aria-label="Filtrar por projeto">
+            <option value="">todos os projetos</option>
+          </select>
           <button class="tool" id="table-new" type="button">Nova transcrição</button>
           <button class="tool" id="table-close" type="button">Fechar</button>
         </div>
@@ -156,6 +167,7 @@
                   <input type="checkbox" id="table-check-all" aria-label="Selecionar todas" />
                 </th>
                 <th data-sort="name">Reunião</th>
+                <th data-sort="group">Projeto</th>
                 <th data-sort="recorded">Gravado em</th>
                 <th data-sort="duration">Duração</th>
                 <th data-sort="segments">Falas</th>
@@ -169,6 +181,68 @@
         </div>
         <p class="detail" id="table-empty"></p>
         <p class="detail" id="table-error"></p>
+      </div>
+
+      <div class="panel panel-context">
+        <p class="filename" id="context-target">reunião</p>
+        <h1 class="display" id="context-title">Gerar tarefas</h1>
+        <p class="lede">Que contexto o Claude deve usar para escrever?</p>
+
+        <div class="choices">
+          <label class="choice">
+            <input type="radio" name="context-source" value="group" id="context-use-group" />
+            <span>
+              <strong>Contexto do projeto <em id="context-group-name"></em></strong>
+              <span class="choice-hint">o mesmo para todas as reuniões do projeto</span>
+            </span>
+          </label>
+          <pre class="context-preview" id="context-group-text"></pre>
+
+          <label class="choice">
+            <input type="radio" name="context-source" value="custom" />
+            <span>
+              <strong>Contexto só para esta reunião</strong>
+              <span class="choice-hint">quando esta call fugiu do padrão do projeto</span>
+            </span>
+          </label>
+          <textarea class="context-input" id="context-custom" rows="4"
+                    placeholder="Ex.: conversa técnica sobre a migração do banco; o documento vai para o time de engenharia, pode usar termos técnicos."></textarea>
+
+          <label class="choice">
+            <input type="radio" name="context-source" value="none" />
+            <span>
+              <strong>Sem contexto</strong>
+              <span class="choice-hint">só a transcrição, em registro neutro</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="actions">
+          <button class="solid" id="context-generate" type="button">Gerar documento</button>
+          <button class="ghost" id="context-cancel" type="button">Cancelar</button>
+        </div>
+      </div>
+
+      <div class="panel panel-groups">
+        <h1 class="display">Projetos</h1>
+        <p class="lede">O contexto de um projeto orienta os documentos de todas as reuniões dele.</p>
+
+        <ul class="group-list" id="group-list"></ul>
+
+        <form class="group-form" id="group-form">
+          <input class="rename-input" id="group-name" type="text" autocomplete="off"
+                 placeholder="Nome do projeto" aria-label="Nome do projeto" />
+          <textarea class="context-input" id="group-context" rows="5"
+                    aria-label="Contexto do projeto"
+                    placeholder="O que é o projeto, quem participa, que tipo de documento você espera. Ex.: acompanhamento semanal do time de produto; documentos vão para o time todo, linguagem direta, sem jargão executivo."></textarea>
+          <div class="actions">
+            <button class="solid" type="submit" id="group-save">Salvar projeto</button>
+            <button class="ghost" type="button" id="group-clear">Novo</button>
+            <button class="ghost danger" type="button" id="group-delete">Excluir</button>
+            <button class="ghost" type="button" id="groups-close">Fechar</button>
+          </div>
+        </form>
+        <p class="detail" id="group-error"></p>
       </div>
 
       <div class="panel panel-doc">

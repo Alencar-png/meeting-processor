@@ -29,6 +29,7 @@ const {
   pdfPathFor,
 } = require('./claude-jobs');
 const library = require('./library');
+const groups = require('./groups');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
@@ -312,7 +313,7 @@ async function cancelJob() {
  * Roda `claude -p` em modo headless na pasta da transcrição e acompanha o
  * stream de eventos para a janela mostrar o que está acontecendo.
  */
-function startDocJob({ kind, transcriptPath }) {
+function startDocJob({ kind, transcriptPath, context = '' }) {
   if (currentDocJob) {
     return { started: false, message: 'Já existe um documento sendo gerado.' };
   }
@@ -331,7 +332,7 @@ function startDocJob({ kind, transcriptPath }) {
   const pdfPath = pdfPathFor(kind, transcriptPath);
   let prompt;
   try {
-    prompt = buildPrompt(kind, { transcriptPath, pdfPath, browser });
+    prompt = buildPrompt(kind, { transcriptPath, pdfPath, browser, context });
   } catch (err) {
     return { started: false, message: err.message };
   }
@@ -451,6 +452,14 @@ ipcMain.handle('library:rename', (_e, { id, name }) =>
 ipcMain.handle('library:delete', (_e, { id, files }) =>
   library.deleteMeeting(loadSettings().outputDir, id, files));
 ipcMain.handle('library:read', (_e, filePath) => library.readText(filePath));
+
+// Grupos (projetos) e seus contextos.
+ipcMain.handle('groups:list', () => groups.listGroups(loadSettings().outputDir));
+ipcMain.handle('groups:save', (_e, group) => groups.saveGroup(loadSettings().outputDir, group));
+ipcMain.handle('groups:delete', (_e, groupId) =>
+  groups.deleteGroup(loadSettings().outputDir, groupId));
+ipcMain.handle('groups:assign', (_e, { meetingId, groupId }) =>
+  groups.assignMeeting(loadSettings().outputDir, meetingId, groupId));
 
 /** Salva uma cópia de um arquivo da reunião onde o usuário escolher. */
 ipcMain.handle('library:download', async (_e, filePath) => {

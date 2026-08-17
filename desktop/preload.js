@@ -50,6 +50,13 @@ contextBridge.exposeInMainWorld('api', {
   readFile: (filePath) => ipcRenderer.invoke('library:read', filePath),
   downloadFile: (filePath) => ipcRenderer.invoke('library:download', filePath),
 
+  // Grupos (projetos) e seus contextos.
+  listGroups: () => ipcRenderer.invoke('groups:list'),
+  saveGroup: (group) => ipcRenderer.invoke('groups:save', group),
+  deleteGroup: (groupId) => ipcRenderer.invoke('groups:delete', groupId),
+  assignGroup: (meetingId, groupId) =>
+    ipcRenderer.invoke('groups:assign', { meetingId, groupId }),
+
   pickOutputDir: () => ipcRenderer.invoke('dialog:pickOutputDir'),
   pickVideo: () => ipcRenderer.invoke('dialog:pickVideo'),
 

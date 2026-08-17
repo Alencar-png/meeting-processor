@@ -4,9 +4,14 @@ Leia a transcrição em `{{TRANSCRICAO}}` (português do Brasil, gerada por
 reconhecimento de fala — pode conter erros de grafia e falas cortadas) e produza
 uma **lista de tarefas** em PDF.
 
+## Contexto
+
+{{CONTEXTO}}
+
 ## O documento
 
-Escreva em português do Brasil. Estrutura:
+Escreva em português do Brasil, no vocabulário do projeto descrito no contexto.
+Estrutura:
 
 1. **Título e data** — use o nome do arquivo e, se a transcrição indicar, a data.
 2. **Resumo do plano** — uma frase dizendo quantas tarefas saíram da reunião e qual é a mais urgente.
@@ -22,7 +27,8 @@ Regras de conteúdo:
 
 - Extraia apenas compromissos reais: algo que alguém vai fazer. Opinião, contexto e
   conversa social não são tarefas.
-- **Não invente** responsáveis, prazos ou tarefas que ninguém mencionou.
+- **Não invente** responsáveis, prazos ou tarefas que ninguém mencionou — nem a
+  partir do contexto do projeto. O contexto orienta a linguagem, não fornece fatos.
 - Agrupe falas repetidas sobre o mesmo assunto numa tarefa só.
 - Se a reunião não gerou nenhuma tarefa, diga isso claramente no documento — um PDF
   honesto e curto vale mais que uma lista inflada.

@@ -46,6 +46,8 @@ function toRow(meeting) {
   return {
     id: meeting.id,
     name: meeting.name,
+    groupId: meeting.group?.id || '',
+    group: meeting.group?.name || '—',
     source: meeting.meta?.source_file || '',
     recorded,
     recordedLabel: formatDateTime(recorded),
@@ -59,18 +61,23 @@ function toRow(meeting) {
   };
 }
 
-/** Aplica busca, filtro e ordenação. Não muda a lista original. */
-function applyView(meetings, { search = '', filter = 'todas', sort = 'recorded', dir = 'desc' } = {}) {
+/** Aplica busca, filtros e ordenação. Não muda a lista original. */
+function applyView(
+  meetings,
+  { search = '', filter = 'todas', group = '', sort = 'recorded', dir = 'desc' } = {},
+) {
   const termo = search.trim().toLowerCase();
   const passaFiltro = FILTERS[filter] || FILTERS.todas;
 
   const rows = meetings
     .filter(passaFiltro)
     .map(toRow)
+    .filter((row) => !group || row.groupId === group)
     .filter((row) => !termo
       || row.name.toLowerCase().includes(termo)
       || row.source.toLowerCase().includes(termo)
-      || row.model.toLowerCase().includes(termo));
+      || row.model.toLowerCase().includes(termo)
+      || row.group.toLowerCase().includes(termo));
 
   const factor = dir === 'asc' ? 1 : -1;
   return rows.sort((a, b) => {
@@ -195,6 +202,7 @@ function renderTable(tbody, rows, handlers) {
     tr.append(
       checkCell(row, { selected: selection.has(row.id), onToggle }),
       nome,
+      cell(row.group, row.groupId ? '' : 'dim'),
       cell(row.recordedLabel, 'num dim'),
       cell(row.durationLabel, 'num'),
       cell(row.segments === null ? '—' : String(row.segments), 'num'),

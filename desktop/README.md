@@ -83,7 +83,7 @@ Transcricoes/
     ├── Reunião com o cliente.md            transcrição com timestamps
     ├── Reunião com o cliente.txt           só o texto
     ├── Reunião com o cliente - Tarefas.pdf
-    ├── Reunião com o cliente - Resumo executivo.pdf
+    ├── Reunião com o cliente - Resumo.pdf
     └── meeting.json                        metadados da reunião
 ```
 
@@ -106,7 +106,7 @@ ver os metadados e a barra de ações:
 | **Visualizar** | Lê a transcrição dentro do app, com busca e destaque no texto. |
 | **Baixar** | Salva uma cópia da transcrição onde você escolher. |
 | **Gerar tarefas** | PDF com a lista de tarefas extraídas da reunião. |
-| **Resumo executivo** | PDF com o resumo da reunião. |
+| **Gerar resumo** | PDF com o resumo da reunião, no registro que o contexto pedir. |
 | **Renomear** | Renomeia a pasta e todos os arquivos de uma vez. |
 | **Excluir** | Apaga a reunião do disco, após confirmação. |
 | Clique num arquivo | Abre no aplicativo padrão do sistema. |
@@ -140,7 +140,35 @@ Selecionar tudo pelo cabeçalho marca apenas as linhas **visíveis** — o que o
 filtro escondeu não é apagado junto. Se uma exclusão em lote falhar no meio, o
 app diz exatamente quais reuniões não foram apagadas.
 
-## Tarefas e resumo executivo (PDF)
+## Projetos e contexto
+
+Uma reunião pode ser anexada a um **projeto**, e o projeto carrega um
+**contexto**: o que é o projeto, quem participa e que tipo de documento você
+espera. Isso existe porque nem toda call é executiva — uma sessão técnica, uma
+retrospectiva e uma reunião de diretoria pedem registros diferentes.
+
+- **Criar e editar**: botão "Gerenciar projetos" no detalhe da reunião.
+- **Anexar**: seletor "Projeto" no detalhe. O vínculo acompanha a reunião ao
+  renomear e some quando ela é excluída.
+- **Filtrar**: seletor de projeto na tabela; o nome do projeto também aparece na
+  barra lateral e numa coluna própria.
+
+Excluir um projeto **não apaga** as reuniões dele — elas apenas ficam sem
+projeto. Tudo fica num `groups.json` na raiz da pasta de saída.
+
+Ao gerar um documento, o app pergunta qual contexto usar:
+
+| Opção | Quando usar |
+|-------|-------------|
+| **Contexto do projeto** | O padrão, quando a reunião pertence a um projeto com contexto. |
+| **Contexto só para esta reunião** | Quando esta call fugiu do padrão do projeto. |
+| **Sem contexto** | Só a transcrição, em registro neutro. |
+
+O contexto orienta foco, vocabulário e registro — mas os prompts deixam
+explícito que ele **não é fonte de fatos**: nada que esteja apenas no contexto
+pode virar decisão, tarefa ou conclusão atribuída à reunião.
+
+## Tarefas e resumo (PDF)
 
 Os dois botões chamam o **Claude Code em modo headless** (`claude -p`), que lê a
 transcrição, monta um HTML e o converte em PDF pelo Edge ou Chrome. Leva cerca de
@@ -166,10 +194,11 @@ desktop/
 ├── claude-jobs.js       # geração de tarefas e resumo via `claude -p`
 ├── library.js           # a pasta de saída lida como biblioteca (CRUD)
 │                        # e os metadados de cada reunião
+├── groups.js            # projetos e seus contextos (groups.json)
 ├── preload.js           # ponte segura entre janela e sistema
 ├── prompts/             # instruções dos documentos (editáveis)
 │   ├── tarefas.md
-│   └── resumo.md
+│   └── resumo.md        # ambos aceitam o contexto do projeto
 └── renderer/
     ├── index.html       # os estados da tela
     ├── styles.css       # direção visual (grafite, âmbar de VU meter)

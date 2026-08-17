@@ -41,6 +41,7 @@ function renderLibraryList(container, meetings, { selectedId, onSelect }) {
     const meta = document.createElement('span');
     meta.className = 'library-meta';
     const marks = [
+      meeting.group?.name || null,
       meeting.hasTarefas ? 'tarefas' : null,
       meeting.hasResumo ? 'resumo' : null,
     ].filter(Boolean);

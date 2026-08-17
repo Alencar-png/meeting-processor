@@ -51,6 +51,27 @@ const el = {
   renameCancel: document.getElementById('rename-cancel'),
 
   detailMeta: document.getElementById('detail-meta'),
+  detailGroup: document.getElementById('detail-group'),
+  manageGroups: document.getElementById('manage-groups'),
+
+  contextTarget: document.getElementById('context-target'),
+  contextTitle: document.getElementById('context-title'),
+  contextUseGroup: document.getElementById('context-use-group'),
+  contextGroupName: document.getElementById('context-group-name'),
+  contextGroupText: document.getElementById('context-group-text'),
+  contextCustom: document.getElementById('context-custom'),
+  contextGenerate: document.getElementById('context-generate'),
+  contextCancel: document.getElementById('context-cancel'),
+
+  groupList: document.getElementById('group-list'),
+  groupForm: document.getElementById('group-form'),
+  groupName: document.getElementById('group-name'),
+  groupContext: document.getElementById('group-context'),
+  groupClear: document.getElementById('group-clear'),
+  groupDelete: document.getElementById('group-delete'),
+  groupsClose: document.getElementById('groups-close'),
+  groupError: document.getElementById('group-error'),
+  tableGroup: document.getElementById('table-group'),
   detailView: document.getElementById('detail-view'),
   detailDownload: document.getElementById('detail-download'),
 
@@ -91,7 +112,8 @@ const el = {
   docCancel: document.getElementById('doc-cancel'),
 };
 
-const DOC_TITLES = { tarefas: 'Gerando tarefas', resumo: 'Gerando resumo executivo' };
+const DOC_TITLES = { tarefas: 'Gerando tarefas', resumo: 'Gerando resumo' };
+const DOC_ASK_TITLES = { tarefas: 'Gerar tarefas', resumo: 'Gerar resumo' };
 
 // Nomes das etapas na voz da interface (o CLI emite rótulos sem acento).
 const STAGE_LABELS = {
@@ -129,8 +151,11 @@ let docTimer = null;
 let pendingVideo = '';    // vídeo aguardando confirmação do nome
 let viewerFilePath = '';  // arquivo aberto no leitor
 let viewerContent = '';
-let tableView = { search: '', filter: 'todas', sort: 'recorded', dir: 'desc' };
+let tableView = { search: '', filter: 'todas', group: '', sort: 'recorded', dir: 'desc' };
 const tableSelection = new Set();  // ids marcados para ações em lote
+let groups = [];
+let editingGroupId = '';  // grupo aberto no formulário de projetos
+let pendingDoc = null;    // { kind, meeting } aguardando a escolha de contexto
 
 // --- Estados ---------------------------------------------------------------
 
@@ -142,6 +167,8 @@ const WAVE_MODE = {
   confirm: 'dragging',
   viewer: 'done',
   table: 'done',
+  context: 'dragging',
+  groups: 'done',
 };
 
 function setState(state) {
@@ -256,6 +283,10 @@ async function openMeeting(id) {
   el.detailError.textContent = '';
   el.renameForm.hidden = true;
   fillMeta(meeting);
+  fillGroupSelect(el.detailGroup, {
+    selectedId: meeting.group?.id || '',
+    emptyLabel: 'sem projeto',
+  });
   window.libraryUI.renderFileList(el.detailFiles, meeting.files, {
     onOpen: (filePath) => window.api.openPath(filePath),
   });
@@ -465,10 +496,181 @@ async function deleteSelected() {
   setState('idle');
 }
 
+// --- Grupos (projetos) ------------------------------------------------------
+
+/** Preenche um <select> com os projetos existentes. */
+function fillGroupSelect(select, { selectedId = '', emptyLabel }) {
+  select.replaceChildren();
+
+  const vazio = document.createElement('option');
+  vazio.value = '';
+  vazio.textContent = emptyLabel;
+  select.append(vazio);
+
+  for (const group of groups) {
+    const option = document.createElement('option');
+    option.value = group.id;
+    option.textContent = group.count
+      ? `${group.name} (${group.count})`
+      : group.name;
+    select.append(option);
+  }
+  select.value = selectedId;
+}
+
+async function refreshGroups() {
+  try {
+    groups = await window.api.listGroups();
+  } catch {
+    // Projetos são um extra: sem eles a biblioteca ainda funciona, e derrubar
+    // a tela inteira por causa deles seria desproporcional.
+    groups = [];
+  }
+  fillGroupSelect(el.tableGroup, {
+    selectedId: tableView.group,
+    emptyLabel: 'todos os projetos',
+  });
+}
+
+/** Lista de projetos no painel de gerenciamento. */
+function renderGroupList() {
+  el.groupList.replaceChildren();
+
+  if (!groups.length) {
+    const vazio = document.createElement('li');
+    vazio.className = 'group-empty';
+    vazio.textContent = 'Nenhum projeto ainda. Crie o primeiro abaixo.';
+    el.groupList.append(vazio);
+    return;
+  }
+
+  for (const group of groups) {
+    const item = document.createElement('li');
+    const botao = document.createElement('button');
+    botao.type = 'button';
+    botao.className = 'group-item';
+    if (group.id === editingGroupId) botao.classList.add('is-selected');
+
+    const nome = document.createElement('span');
+    nome.className = 'group-name';
+    nome.textContent = group.name;
+
+    const meta = document.createElement('span');
+    meta.className = 'group-meta';
+    meta.textContent = `${group.count} reunião(ões)`
+      + (group.context ? ` · ${group.context.length} caracteres de contexto` : ' · sem contexto');
+
+    botao.append(nome, meta);
+    botao.addEventListener('click', () => editGroup(group.id));
+    item.append(botao);
+    el.groupList.append(item);
+  }
+}
+
+function editGroup(groupId) {
+  const group = groups.find((g) => g.id === groupId);
+  editingGroupId = group ? group.id : '';
+  el.groupName.value = group ? group.name : '';
+  el.groupContext.value = group ? group.context : '';
+  el.groupError.textContent = '';
+  el.groupDelete.hidden = !group;
+  renderGroupList();
+}
+
+async function openGroups() {
+  await refreshGroups();
+  editGroup('');
+  setState('groups');
+}
+
+async function saveGroup() {
+  const result = await window.api.saveGroup({
+    id: editingGroupId,
+    name: el.groupName.value,
+    context: el.groupContext.value,
+  });
+  if (!result.ok) {
+    el.groupError.textContent = result.message;
+    return;
+  }
+  await refreshGroups();
+  await refreshLibrary();
+  editGroup(result.id);
+}
+
+async function deleteGroup() {
+  const group = groups.find((g) => g.id === editingGroupId);
+  if (!group) return;
+  const confirmado = window.confirm(
+    `Excluir o projeto "${group.name}"?\n\nAs ${group.count} reunião(ões) dele continuam no disco, apenas ficam sem projeto.`,
+  );
+  if (!confirmado) return;
+
+  const result = await window.api.deleteGroup(group.id);
+  if (!result.ok) {
+    el.groupError.textContent = result.message;
+    return;
+  }
+  await refreshGroups();
+  await refreshLibrary();
+  editGroup('');
+}
+
+/** Anexa a reunião aberta ao projeto escolhido (vazio desanexa). */
+async function assignGroup(groupId) {
+  if (!selected) return;
+  const result = await window.api.assignGroup(selected.id, groupId);
+  if (!result.ok) {
+    el.detailError.textContent = result.message;
+    return;
+  }
+  await refreshGroups();
+  await refreshLibrary();
+  selected = await window.api.getMeeting(selected.id);
+}
+
 // --- Documentos (Claude) ----------------------------------------------------
 
-/** Gera tarefas ou resumo executivo em PDF para a reunião informada. */
-async function generateDoc(kind, meeting) {
+/**
+ * Pergunta qual contexto usar antes de gerar o documento.
+ *
+ * O contexto do projeto é o padrão quando existe; sem projeto, a escolha cai
+ * para um contexto específico desta reunião.
+ */
+function askContext(kind, meeting) {
+  if (!meeting?.transcript) return;
+  pendingDoc = { kind, meeting };
+
+  const group = meeting.group;
+  el.contextTitle.textContent = DOC_ASK_TITLES[kind];
+  el.contextTarget.textContent = meeting.name;
+  el.contextCustom.value = '';
+  el.contextGroupName.textContent = group ? group.name : '';
+  el.contextGroupText.textContent = group?.context || '';
+  el.contextGroupText.hidden = !group?.context;
+
+  // Sem projeto (ou projeto sem contexto), a opção não tem o que oferecer.
+  const temContextoDeGrupo = Boolean(group?.context);
+  el.contextUseGroup.disabled = !temContextoDeGrupo;
+  el.contextUseGroup.closest('.choice').classList.toggle('is-disabled', !temContextoDeGrupo);
+
+  const escolha = temContextoDeGrupo ? 'group' : 'custom';
+  document.querySelector(`input[name="context-source"][value="${escolha}"]`).checked = true;
+
+  setState('context');
+  if (!temContextoDeGrupo) el.contextCustom.focus();
+}
+
+/** Contexto efetivo conforme a opção marcada. */
+function chosenContext() {
+  const escolha = document.querySelector('input[name="context-source"]:checked')?.value;
+  if (escolha === 'group') return pendingDoc?.meeting.group?.context || '';
+  if (escolha === 'custom') return el.contextCustom.value;
+  return '';
+}
+
+/** Gera tarefas ou resumo em PDF para a reunião informada. */
+async function generateDoc(kind, meeting, context = '') {
   if (!meeting?.transcript) return;
 
   el.docTitle.textContent = DOC_TITLES[kind];
@@ -482,7 +684,11 @@ async function generateDoc(kind, meeting) {
     el.docClock.textContent = clock((Date.now() - docStartedAt) / 1000);
   }, 1000);
 
-  const result = await window.api.startDoc({ kind, transcriptPath: meeting.transcript });
+  const result = await window.api.startDoc({
+    kind,
+    transcriptPath: meeting.transcript,
+    context,
+  });
   if (!result.started) {
     stopDocClock();
     onError(result.message);
@@ -692,12 +898,51 @@ el.again.addEventListener('click', () => setState('idle'));
 el.retry.addEventListener('click', () => setState('idle'));
 el.recheck.addEventListener('click', checkEngine);
 
-// Documentos gerados pelo Claude, a partir do painel de conclusão ou do detalhe.
-el.doneTarefas.addEventListener('click', () => generateDoc('tarefas', selected));
-el.doneResumo.addEventListener('click', () => generateDoc('resumo', selected));
-el.detailTarefas.addEventListener('click', () => generateDoc('tarefas', selected));
-el.detailResumo.addEventListener('click', () => generateDoc('resumo', selected));
+// Documentos gerados pelo Claude: sempre passando pela escolha de contexto.
+el.doneTarefas.addEventListener('click', () => askContext('tarefas', selected));
+el.doneResumo.addEventListener('click', () => askContext('resumo', selected));
+el.detailTarefas.addEventListener('click', () => askContext('tarefas', selected));
+el.detailResumo.addEventListener('click', () => askContext('resumo', selected));
 el.docCancel.addEventListener('click', () => window.api.cancelDoc());
+
+el.contextGenerate.addEventListener('click', () => {
+  if (!pendingDoc) return;
+  generateDoc(pendingDoc.kind, pendingDoc.meeting, chosenContext());
+});
+
+el.contextCancel.addEventListener('click', () => {
+  pendingDoc = null;
+  setState('detail');
+});
+
+// Mexer no campo de contexto específico já marca a opção correspondente —
+// texto digitado que fosse ignorado por causa do rádio seria uma armadilha.
+const marcarContextoCustom = () => {
+  document.querySelector('input[name="context-source"][value="custom"]').checked = true;
+};
+el.contextCustom.addEventListener('focus', marcarContextoCustom);
+el.contextCustom.addEventListener('input', marcarContextoCustom);
+
+// Projetos.
+el.detailGroup.addEventListener('change', () => assignGroup(el.detailGroup.value));
+el.manageGroups.addEventListener('click', openGroups);
+// Reabrir a reunião recarrega o seletor de projetos: sem isso, um projeto
+// recém-criado não apareceria na lista do detalhe.
+el.groupsClose.addEventListener('click', async () => {
+  if (selected) await openMeeting(selected.id);
+  else setState('idle');
+});
+el.groupClear.addEventListener('click', () => editGroup(''));
+el.groupDelete.addEventListener('click', deleteGroup);
+el.groupForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  saveGroup();
+});
+
+el.tableGroup.addEventListener('change', () => {
+  tableView = { ...tableView, group: el.tableGroup.value };
+  renderTable();
+});
 
 // CRUD da biblioteca.
 el.detailBack.addEventListener('click', () => setState('idle'));
@@ -852,5 +1097,6 @@ window.api.on('doc:done', async (result) => {
   el.language.value = settings.language;
   setState('idle');
   await checkEngine();
+  await refreshGroups();
   await refreshLibrary(null);
 })();

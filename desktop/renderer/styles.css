@@ -281,6 +281,8 @@ body {
 .app[data-state="idle"] .panel-idle,
 .app[data-state="dragging"] .panel-drop,
 .app[data-state="confirm"] .panel-confirm,
+.app[data-state="context"] .panel-context,
+.app[data-state="groups"] .panel-groups,
 .app[data-state="working"] .panel-working,
 .app[data-state="done"] .panel-done,
 .app[data-state="detail"] .panel-detail,
@@ -296,14 +298,18 @@ body {
 /* Telas com muito conteúdo rolam e começam no topo, em vez de centralizar. */
 .app[data-state="detail"] .stage,
 .app[data-state="viewer"] .stage,
-.app[data-state="table"] .stage {
+.app[data-state="table"] .stage,
+.app[data-state="context"] .stage,
+.app[data-state="groups"] .stage {
   justify-content: flex-start;
   overflow-y: auto;
 }
 
 /* A onda não cabe nas telas densas: some sem deixar espaço vazio. */
 .app[data-state="table"] .wave,
-.app[data-state="viewer"] .wave {
+.app[data-state="viewer"] .wave,
+.app[data-state="context"] .wave,
+.app[data-state="groups"] .wave {
   display: none;
 }
 
@@ -646,6 +652,156 @@ body {
   font-size: 13px;
   color: var(--paper);
 }
+
+/* --- Projetos e contexto -------------------------------------------------- */
+
+.group-row {
+  display: flex;
+  align-items: center;
+  gap: var(--step);
+  width: 100%;
+  padding: var(--step) 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.group-row .label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+
+.group-row .select { flex: 1; min-width: 0; }
+.group-row .tool { flex: 0 0 auto; }
+
+.panel-context,
+.panel-groups { width: 100%; max-width: 560px; }
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--step);
+  width: 100%;
+  margin: var(--step) 0;
+  text-align: left;
+}
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--step);
+  padding: calc(var(--step) * 1.5);
+  background: var(--ink-raised);
+  border: 1px solid var(--line-soft);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: border-color 140ms var(--ease);
+}
+
+.choice:hover { border-color: var(--line); }
+.choice:has(input:checked) { border-color: var(--amber-dim); }
+
+.choice input { margin-top: 3px; accent-color: var(--amber); }
+.choice.is-disabled { opacity: 0.45; cursor: not-allowed; }
+
+.choice span { display: flex; flex-direction: column; gap: 2px; }
+.choice strong { font-size: 13px; font-weight: 600; color: var(--paper); }
+.choice strong em { font-style: normal; color: var(--amber); }
+
+.choice-hint { font-size: 12px; color: var(--muted-dim); }
+
+.context-preview {
+  width: 100%;
+  max-height: 120px;
+  margin: 0;
+  padding: calc(var(--step) * 1.5);
+  overflow-y: auto;
+  background: #100d0b;
+  border: 1px solid var(--line-soft);
+  font-family: var(--body);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+  text-align: left;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.context-preview[hidden] { display: none; }
+
+.context-input {
+  width: 100%;
+  padding: calc(var(--step) * 1.5);
+  background: var(--ink-raised);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--paper);
+  font-family: var(--body);
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.context-input::placeholder { color: var(--muted-dim); }
+.context-input:focus { outline: none; border-color: var(--amber); }
+
+/* --- Lista de projetos ---------------------------------------------------- */
+
+.group-list {
+  list-style: none;
+  width: 100%;
+  margin: var(--step) 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--line-soft);
+  border: 1px solid var(--line-soft);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.group-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: calc(var(--step) * 1.25) calc(var(--step) * 2);
+  background: var(--ink-raised);
+  border: 0;
+  border-left: 2px solid transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms var(--ease);
+}
+
+.group-item:hover { background: #241f1b; }
+.group-item.is-selected { border-left-color: var(--amber); background: #241f1b; }
+
+.group-name { font-size: 13px; color: var(--paper); }
+
+.group-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted-dim);
+}
+
+.group-empty {
+  padding: calc(var(--step) * 2);
+  background: var(--ink-raised);
+  font-size: 12px;
+  color: var(--muted-dim);
+}
+
+.group-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--step);
+  width: 100%;
+}
+
+.group-form .actions { margin-top: 0; }
 
 /* --- Leitor da transcrição ----------------------------------------------- */
 

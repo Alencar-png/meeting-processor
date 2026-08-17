@@ -12,6 +12,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const groups = require('./groups');
+
 const TRANSCRIPT_EXTENSIONS = ['.md', '.txt'];
 const DOCUMENT_EXTENSIONS = ['.pdf'];
 const ALL_EXTENSIONS = [...TRANSCRIPT_EXTENSIONS, ...DOCUMENT_EXTENSIONS];
@@ -20,7 +22,9 @@ const ALL_EXTENSIONS = [...TRANSCRIPT_EXTENSIONS, ...DOCUMENT_EXTENSIONS];
 const METADATA_FILE = 'meeting.json';
 
 // Sufixos dos documentos derivados — removidos para achar a reunião de origem.
-const DERIVED_SUFFIXES = [' - Tarefas', ' - Resumo executivo'];
+// "Resumo executivo" continua na lista por causa dos arquivos já gerados antes
+// de o resumo deixar de ser sempre executivo.
+const DERIVED_SUFFIXES = [' - Tarefas', ' - Resumo executivo', ' - Resumo'];
 
 // Caracteres proibidos em nome de arquivo no Windows.
 const INVALID_CHARS = /[<>:"/\\|?*]/;
@@ -72,7 +76,8 @@ function finish(meeting) {
     transcript: files.find((f) => f.ext === 'md')?.path
       || files.find((f) => f.kind === 'transcricao')?.path,
     hasTarefas: files.some((f) => f.name.includes(' - Tarefas.')),
-    hasResumo: files.some((f) => f.name.includes(' - Resumo executivo.')),
+    hasResumo: files.some((f) => f.name.includes(' - Resumo.')
+      || f.name.includes(' - Resumo executivo.')),
   };
 }
 
@@ -139,8 +144,11 @@ function listMeetings(dir) {
   const folders = readFolders(dir);
   const taken = new Set(folders.map((m) => m.id));
   const loose = readLooseFiles(dir).filter((m) => !taken.has(m.id));
+  const porReuniao = groups.groupsByMeeting(dir);
 
-  return [...folders, ...loose].sort((a, b) => b.modified - a.modified);
+  return [...folders, ...loose]
+    .map((m) => ({ ...m, group: porReuniao[m.id] || null }))
+    .sort((a, b) => b.modified - a.modified);
 }
 
 /** Uma reunião específica, ou null. */
@@ -219,6 +227,7 @@ function renameMeeting(dir, id, newName) {
       return { ok: false, message: `Já existe um arquivo chamado ${path.basename(conflict.to)}.` };
     }
     const result = renameFiles(moves);
+    if (result.ok) groups.renameMeeting(dir, meeting.id, clean);
     return result.ok ? { ok: true, id: clean } : result;
   }
 
@@ -243,6 +252,9 @@ function renameMeeting(dir, id, newName) {
     return { ok: false, message: `Não foi possível renomear a pasta: ${err.message}` };
   }
 
+  // O vínculo com o grupo acompanha o novo nome; sem isso a reunião sairia
+  // silenciosamente do projeto ao ser renomeada.
+  groups.renameMeeting(dir, meeting.id, clean);
   return { ok: true, id: clean };
 }
 
@@ -254,6 +266,7 @@ function deleteMeeting(dir, id, files = null) {
   if (!files && !meeting.legacy) {
     try {
       fs.rmSync(meeting.dir, { recursive: true, force: true });
+      groups.forgetMeeting(dir, meeting.id);
       return { ok: true, deleted: meeting.files.length };
     } catch (err) {
       return { ok: false, message: `Não foi possível excluir: ${err.message}` };
@@ -276,6 +289,7 @@ function deleteMeeting(dir, id, files = null) {
   if (failed.length) {
     return { ok: false, message: `Não foi possível excluir: ${failed.join(', ')}` };
   }
+  if (!files) groups.forgetMeeting(dir, meeting.id);
   return { ok: true, deleted: targets.length };
 }
 

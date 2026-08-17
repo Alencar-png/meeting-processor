@@ -15,7 +15,9 @@ const path = require('node:path');
 
 const KINDS = {
   tarefas: { prompt: 'tarefas.md', suffix: 'Tarefas' },
-  resumo: { prompt: 'resumo.md', suffix: 'Resumo executivo' },
+  // "Resumo" e não "Resumo executivo": o registro do documento vem do contexto
+  // do projeto, não de um formato fixo.
+  resumo: { prompt: 'resumo.md', suffix: 'Resumo' },
 };
 
 // Navegadores capazes de imprimir HTML em PDF, na ordem de preferência.
@@ -30,8 +32,32 @@ function findBrowser() {
   return BROWSERS.find((b) => fs.existsSync(b)) || null;
 }
 
+/**
+ * Bloco de contexto inserido no prompt.
+ *
+ * Sem contexto, o texto diz isso explicitamente: um placeholder vazio deixaria
+ * o modelo preenchendo a lacuna por conta própria.
+ */
+function contextBlock(context) {
+  const texto = (context || '').trim();
+  if (!texto) {
+    return 'Nenhum contexto foi fornecido. Baseie-se apenas na transcrição e '
+      + 'mantenha um registro profissional e neutro.';
+  }
+  return [
+    'O contexto abaixo descreve o projeto e o tipo de documento esperado.',
+    'Use-o para ajustar o foco, o vocabulário e o registro do texto — mas ele',
+    'não é fonte de fatos: nada que esteja apenas no contexto pode virar',
+    'decisão, tarefa ou conclusão atribuída à reunião.',
+    '',
+    '```',
+    texto,
+    '```',
+  ].join('\n');
+}
+
 /** Monta o prompt final a partir do template, com caminhos absolutos. */
-function buildPrompt(kind, { transcriptPath, pdfPath, browser }) {
+function buildPrompt(kind, { transcriptPath, pdfPath, browser, context = '' }) {
   const config = KINDS[kind];
   if (!config) throw new Error(`Tipo de documento desconhecido: ${kind}`);
 
@@ -48,7 +74,8 @@ function buildPrompt(kind, { transcriptPath, pdfPath, browser }) {
     .replaceAll('{{TRANSCRICAO}}', transcriptPath)
     .replaceAll('{{PDF}}', pdfPath)
     .replaceAll('{{HTML_TMP}}', htmlTmp)
-    .replaceAll('{{EDGE}}', browser);
+    .replaceAll('{{EDGE}}', browser)
+    .replaceAll('{{CONTEXTO}}', contextBlock(context));
 }
 
 /** Caminho do PDF gerado para uma transcrição. */

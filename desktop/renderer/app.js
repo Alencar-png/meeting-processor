@@ -74,6 +74,13 @@ const el = {
   tableFilter: document.getElementById('table-filter'),
   tableClose: document.getElementById('table-close'),
   tableEmpty: document.getElementById('table-empty'),
+  tableError: document.getElementById('table-error'),
+  tableNew: document.getElementById('table-new'),
+  tableBulk: document.getElementById('table-bulk'),
+  tableSelection: document.getElementById('table-selection'),
+  tableDeleteSelected: document.getElementById('table-delete-selected'),
+  tableClearSelection: document.getElementById('table-clear-selection'),
+  tableCheckAll: document.getElementById('table-check-all'),
 
   doneTarefas: document.getElementById('done-tarefas'),
   doneResumo: document.getElementById('done-resumo'),
@@ -123,6 +130,7 @@ let pendingVideo = '';    // vídeo aguardando confirmação do nome
 let viewerFilePath = '';  // arquivo aberto no leitor
 let viewerContent = '';
 let tableView = { search: '', filter: 'todas', sort: 'recorded', dir: 'desc' };
+const tableSelection = new Set();  // ids marcados para ações em lote
 
 // --- Estados ---------------------------------------------------------------
 
@@ -331,12 +339,98 @@ async function openViewer(meeting) {
 
 // --- Tabela -----------------------------------------------------------------
 
+/** Renomeia a partir da tabela, sem sair dela. */
+async function renameFromTable(id, novoNome, encerrarEdicao) {
+  const result = await window.api.renameMeeting(id, novoNome);
+  if (!result.ok) {
+    el.tableError.textContent = result.message;
+    encerrarEdicao();
+    return;
+  }
+  el.tableError.textContent = '';
+  // A seleção acompanha o novo id, senão a linha renomeada "perderia" a marca.
+  if (tableSelection.delete(id)) tableSelection.add(result.id);
+  await refreshLibrary();
+}
+
+/** Exclui uma reunião a partir da tabela, com confirmação. */
+async function deleteFromTable(id) {
+  const reuniao = meetings.find((m) => m.id === id);
+  if (!reuniao) return;
+  const confirmado = window.confirm(
+    `Excluir "${reuniao.name}"?\n\n${reuniao.files.length} arquivo(s) serão apagados do disco. Não dá para desfazer.`,
+  );
+  if (!confirmado) return;
+
+  const result = await window.api.deleteMeeting(id);
+  el.tableError.textContent = result.ok ? '' : result.message;
+  tableSelection.delete(id);
+  if (selected?.id === id) selected = null;
+  await refreshLibrary();
+}
+
+/** Exclui todas as reuniões marcadas, relatando o que falhou. */
+async function deleteSelectedFromTable() {
+  const ids = [...tableSelection];
+  if (!ids.length) return;
+
+  const total = ids.reduce(
+    (soma, id) => soma + (meetings.find((m) => m.id === id)?.files.length || 0), 0,
+  );
+  const confirmado = window.confirm(
+    `Excluir ${ids.length} transcrição(ões)?\n\n${total} arquivo(s) serão apagados do disco. Não dá para desfazer.`,
+  );
+  if (!confirmado) return;
+
+  const falhas = [];
+  for (const id of ids) {
+    const result = await window.api.deleteMeeting(id);
+    if (!result.ok) falhas.push(`${id}: ${result.message}`);
+    else tableSelection.delete(id);
+  }
+
+  el.tableError.textContent = falhas.length ? falhas.join(' · ') : '';
+  if (selected && !meetings.some((m) => m.id === selected.id)) selected = null;
+  await refreshLibrary();
+}
+
+function toggleSelection(id, marcado) {
+  if (marcado) tableSelection.add(id);
+  else tableSelection.delete(id);
+  renderTable();
+}
+
 function renderTable() {
   const rows = window.tableUI.applyView(meetings, tableView);
-  window.tableUI.renderTable(el.tableBody, rows, { onOpen: openMeeting });
-  el.tableEmpty.textContent = rows.length
-    ? `${rows.length} de ${meetings.length} transcrição(ões)`
-    : 'Nenhuma transcrição corresponde à busca.';
+  // Reuniões excluídas ou renomeadas não podem seguir "selecionadas".
+  const visiveis = new Set(rows.map((r) => r.id));
+  for (const id of [...tableSelection]) {
+    if (!visiveis.has(id)) tableSelection.delete(id);
+  }
+
+  const nameCells = window.tableUI.renderTable(el.tableBody, rows, {
+    selection: tableSelection,
+    onOpen: openMeeting,
+    onToggle: toggleSelection,
+    onRename: renameFromTable,
+    onRenameStart: (id) => nameCells.get(id)?.startEditing(),
+    onDelete: deleteFromTable,
+  });
+
+  // A mensagem distingue "não há nada" de "o filtro escondeu tudo".
+  if (rows.length) {
+    el.tableEmpty.textContent = `${rows.length} de ${meetings.length} transcrição(ões)`;
+  } else if (meetings.length) {
+    el.tableEmpty.textContent = 'Nenhuma transcrição corresponde à busca.';
+  } else {
+    el.tableEmpty.textContent = 'Nenhuma transcrição ainda. Solte um vídeo para começar.';
+  }
+
+  const marcadas = tableSelection.size;
+  el.tableBulk.hidden = marcadas === 0;
+  el.tableSelection.textContent = `${marcadas} selecionada(s)`;
+  el.tableCheckAll.checked = marcadas > 0 && marcadas === rows.length;
+  el.tableCheckAll.indeterminate = marcadas > 0 && marcadas < rows.length;
 
   for (const th of el.table.querySelectorAll('th')) {
     if (th.dataset.sort === tableView.sort) th.dataset.active = tableView.dir;
@@ -665,6 +759,22 @@ el.viewTable.addEventListener('click', () => {
   setState('table');
 });
 el.tableClose.addEventListener('click', () => setState('idle'));
+el.tableNew.addEventListener('click', pickVideo);
+el.tableDeleteSelected.addEventListener('click', deleteSelectedFromTable);
+
+el.tableClearSelection.addEventListener('click', () => {
+  tableSelection.clear();
+  renderTable();
+});
+
+el.tableCheckAll.addEventListener('change', () => {
+  const rows = window.tableUI.applyView(meetings, tableView);
+  tableSelection.clear();
+  // Marca só o que está visível: selecionar o que o filtro escondeu seria
+  // apagar coisas que o usuário não está vendo.
+  if (el.tableCheckAll.checked) rows.forEach((r) => tableSelection.add(r.id));
+  renderTable();
+});
 el.tableSearch.addEventListener('input', () => {
   tableView = { ...tableView, search: el.tableSearch.value };
   renderTable();

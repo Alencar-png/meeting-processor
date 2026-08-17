@@ -89,6 +89,79 @@ function cell(text, className) {
   return td;
 }
 
+/** Célula do nome — vira campo de edição quando a linha é renomeada. */
+function nameCell(row, { onRename }) {
+  const td = document.createElement('td');
+  td.className = 'col-name';
+
+  const texto = document.createElement('span');
+  texto.textContent = row.name;
+  td.append(texto);
+
+  td.startEditing = () => {
+    const input = document.createElement('input');
+    input.className = 'cell-input';
+    input.value = row.name;
+    input.setAttribute('aria-label', 'Novo nome');
+
+    const encerrar = () => td.replaceChildren(texto);
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();   // Enter aqui salva, não abre a reunião
+      if (e.key === 'Enter') onRename(row.id, input.value, encerrar);
+      if (e.key === 'Escape') encerrar();
+    });
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('blur', encerrar);
+
+    td.replaceChildren(input);
+    input.focus();
+    input.select();
+  };
+
+  return td;
+}
+
+/** Célula de ações da linha: abrir, renomear e excluir. */
+function actionsCell(row, { onOpen, onRenameStart, onDelete }) {
+  const td = document.createElement('td');
+  td.className = 'col-actions';
+
+  const acoes = [
+    ['abrir', () => onOpen(row.id), ''],
+    ['renomear', () => onRenameStart(row.id), ''],
+    ['excluir', () => onDelete(row.id), 'row-danger'],
+  ];
+
+  for (const [rotulo, acao, className] of acoes) {
+    const botao = document.createElement('button');
+    botao.type = 'button';
+    botao.className = `row-action ${className}`.trim();
+    botao.textContent = rotulo;
+    botao.addEventListener('click', (e) => {
+      e.stopPropagation();   // o clique na linha abriria a reunião
+      acao();
+    });
+    td.append(botao);
+  }
+  return td;
+}
+
+/** Caixa de seleção da linha, para as ações em lote. */
+function checkCell(row, { selected, onToggle }) {
+  const td = document.createElement('td');
+  td.className = 'col-check';
+
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.checked = selected;
+  check.setAttribute('aria-label', `Selecionar ${row.name}`);
+  check.addEventListener('click', (e) => e.stopPropagation());
+  check.addEventListener('change', () => onToggle(row.id, check.checked));
+
+  td.append(check);
+  return td;
+}
+
 function docsCell(row) {
   const td = document.createElement('td');
   for (const [label, on] of [['tarefas', row.hasTarefas], ['resumo', row.hasResumo]]) {
@@ -100,27 +173,44 @@ function docsCell(row) {
   return td;
 }
 
-/** Desenha as linhas; clicar (ou Enter) numa linha abre a reunião. */
-function renderTable(tbody, rows, { onOpen }) {
+/**
+ * Desenha as linhas; clicar (ou Enter) numa linha abre a reunião.
+ *
+ * Devolve um mapa id -> célula do nome, para o chamador iniciar a edição
+ * inline sem redesenhar a tabela inteira.
+ */
+function renderTable(tbody, rows, handlers) {
+  const { onOpen, onRename, onRenameStart, onDelete, onToggle, selection = new Set() } = handlers;
   tbody.replaceChildren();
+  const nameCells = new Map();
 
   for (const row of rows) {
     const tr = document.createElement('tr');
     tr.tabIndex = 0;
+    if (selection.has(row.id)) tr.classList.add('is-selected');
+
+    const nome = nameCell(row, { onRename });
+    nameCells.set(row.id, nome);
+
     tr.append(
-      cell(row.name),
+      checkCell(row, { selected: selection.has(row.id), onToggle }),
+      nome,
       cell(row.recordedLabel, 'num dim'),
       cell(row.durationLabel, 'num'),
       cell(row.segments === null ? '—' : String(row.segments), 'num'),
       cell(row.model, 'dim'),
       docsCell(row),
+      actionsCell(row, { onOpen, onRenameStart, onDelete }),
     );
+
     tr.addEventListener('click', () => onOpen(row.id));
     tr.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') onOpen(row.id);
     });
     tbody.append(tr);
   }
+
+  return nameCells;
 }
 
 window.tableUI = { applyView, formatDateTime, formatDuration, recordedAt, renderTable };

@@ -726,6 +726,70 @@ body {
 .datatable .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .datatable .dim { color: var(--muted-dim); }
 
+.datatable tbody tr.is-selected td {
+  background: #241f1b;
+  box-shadow: inset 2px 0 0 var(--amber);
+}
+
+.col-check { width: 34px; text-align: center; }
+.col-check input { accent-color: var(--amber); cursor: pointer; }
+
+.col-name { min-width: 160px; }
+
+.col-actions { width: 1%; white-space: nowrap; text-align: right; }
+
+.row-action {
+  padding: 3px 7px;
+  margin-left: 4px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--muted-dim);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 140ms var(--ease), border-color 140ms var(--ease);
+}
+
+.row-action:hover { color: var(--amber); border-color: var(--amber-dim); }
+.row-danger:hover { color: var(--red); border-color: var(--red); }
+.row-action:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+
+/* Edição do nome direto na célula. */
+.cell-input {
+  width: 100%;
+  padding: 4px 6px;
+  background: var(--ink);
+  border: 1px solid var(--amber);
+  border-radius: 2px;
+  color: var(--paper);
+  font-family: var(--body);
+  font-size: 12px;
+}
+
+.cell-input:focus { outline: none; }
+
+/* Barra de ações em lote, visível só quando há seleção. */
+.bulk {
+  display: flex;
+  align-items: center;
+  gap: var(--step);
+  width: 100%;
+  margin-bottom: var(--step);
+  padding: var(--step) calc(var(--step) * 1.5);
+  background: var(--ink-raised);
+  border: 1px solid var(--amber-dim);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+}
+
+.bulk[hidden] { display: none; }
+.bulk .tool { flex: 0 0 auto; }
+
 /* As duas etiquetas aparecem sempre: a apagada mostra o que ainda falta gerar. */
 .tag {
   display: inline-block;

@@ -136,24 +136,39 @@
             <option value="com-resumo">com resumo</option>
             <option value="sem-resumo">sem resumo</option>
           </select>
+          <button class="tool" id="table-new" type="button">Nova transcrição</button>
           <button class="tool" id="table-close" type="button">Fechar</button>
         </div>
+
+        <div class="bulk" id="table-bulk" hidden>
+          <span id="table-selection">0 selecionadas</span>
+          <button class="tool tool-danger" id="table-delete-selected" type="button">
+            Excluir selecionadas
+          </button>
+          <button class="tool" id="table-clear-selection" type="button">Limpar seleção</button>
+        </div>
+
         <div class="table-wrap">
           <table class="datatable" id="table">
             <thead>
               <tr>
+                <th class="col-check">
+                  <input type="checkbox" id="table-check-all" aria-label="Selecionar todas" />
+                </th>
                 <th data-sort="name">Reunião</th>
                 <th data-sort="recorded">Gravado em</th>
                 <th data-sort="duration">Duração</th>
                 <th data-sort="segments">Falas</th>
                 <th data-sort="model">Modelo</th>
                 <th data-sort="docs">Documentos</th>
+                <th class="col-actions">Ações</th>
               </tr>
             </thead>
             <tbody id="table-body"></tbody>
           </table>
         </div>
         <p class="detail" id="table-empty"></p>
+        <p class="detail" id="table-error"></p>
       </div>
 
       <div class="panel panel-doc">

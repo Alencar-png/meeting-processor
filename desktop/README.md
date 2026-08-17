@@ -126,6 +126,20 @@ documentos existem.
 - **Ordenação** clicando no cabeçalho da coluna (clique de novo inverte).
 - Clicar numa linha abre o detalhe daquela reunião.
 
+O CRUD também está na tabela, sem precisar abrir cada reunião:
+
+| Ação | Onde |
+|------|------|
+| **Nova transcrição** | Botão na barra de filtros: abre o seletor de vídeo. |
+| **Abrir** | Botão da linha (ou clique na linha). |
+| **Renomear** | Botão da linha: o nome vira campo de edição ali mesmo. `Enter` salva, `Esc` cancela. |
+| **Excluir** | Botão da linha, com confirmação que diz quantos arquivos serão apagados. |
+| **Excluir várias** | Marque as caixas (ou o cabeçalho para todas) e use "Excluir selecionadas". |
+
+Selecionar tudo pelo cabeçalho marca apenas as linhas **visíveis** — o que o
+filtro escondeu não é apagado junto. Se uma exclusão em lote falhar no meio, o
+app diz exatamente quais reuniões não foram apagadas.
+
 ## Tarefas e resumo executivo (PDF)
 
 Os dois botões chamam o **Claude Code em modo headless** (`claude -p`), que lê a

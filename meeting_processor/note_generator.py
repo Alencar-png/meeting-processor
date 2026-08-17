@@ -1,14 +1,13 @@
 """Gerador de notas de reunião para Obsidian."""
 
 import logging
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
 from .config import Settings
 from .models import MeetingSummary, Transcript
-from .utils import format_duration, format_timestamp
+from .utils import atomic_write_text, format_duration, format_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +86,7 @@ class NoteGenerator:
             tarefas_link=paths.tarefas_name,
             transcricao_link=paths.transcricao_name,
         )
-        paths.note_path.write_text(note_content, encoding="utf-8")
+        atomic_write_text(paths.note_path, note_content)
         logger.info("Nota de reuniao criada: %s", paths.note_path)
 
     def write_group_note(self, paths: MeetingPaths, has_summary: bool) -> None:
@@ -97,7 +96,7 @@ class NoteGenerator:
             lines.append(f"- [[{paths.resumo_name}|Resumo]]")
             lines.append(f"- [[{paths.tarefas_name}|Tarefas]]")
         lines.append(f"- [[{paths.transcricao_name}|Transcricao]]")
-        paths.group_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        atomic_write_text(paths.group_path, "\n".join(lines) + "\n")
 
     def generate(
         self,
@@ -160,23 +159,36 @@ duration: "{duration}"
             f"\n# {title}\n",
         ]
 
-        # Info rápida + link para Tarefas
+        # Info rápida
         participants_str = ", ".join(summary.participants) if summary.participants else "N/A"
         topics_str = ", ".join(summary.key_topics) if summary.key_topics else "N/A"
         body_parts.extend([
             f"**Participantes:** {participants_str}  ",
             f"**Topicos:** {topics_str}  ",
-            f"**Tarefas:** {len(summary.action_items)} - [[{tarefas_link}|Tarefas]]",
             "",
         ])
 
-        # Resumo executivo
+        # 1. Resumo executivo
         body_parts.extend([
             "## Resumo Executivo\n",
             f"{summary.executive_summary}\n",
         ])
 
-        # Resumo por período
+        # 2. Resumo detalhado (o foco — ata narrativa)
+        if summary.detailed_summary.strip():
+            body_parts.extend([
+                "## Resumo Detalhado\n",
+                f"{summary.detailed_summary}\n",
+            ])
+
+        # 3. Decisões tomadas
+        if summary.decisions:
+            body_parts.append("## Decisoes\n")
+            for decision in summary.decisions:
+                body_parts.append(f"- {decision}")
+            body_parts.append("")
+
+        # 4. Resumo por período
         if summary.time_windows:
             body_parts.append("## Resumo por Periodo\n")
             for tw in summary.time_windows:
@@ -185,9 +197,9 @@ duration: "{duration}"
                 body_parts.append(f"### {start} - {end}\n")
                 body_parts.append(f"{tw.summary}\n")
 
-        # Tarefas identificadas
-        body_parts.append("## Tarefas Identificadas\n")
+        # 5. Tarefas (saída secundária — só aparece se houver)
         if summary.action_items:
+            body_parts.append("## Tarefas Identificadas\n")
             for item in summary.action_items:
                 task_line = f"- [ ] {item.description}"
                 details = []
@@ -201,16 +213,11 @@ duration: "{duration}"
                     task_line += f" ({', '.join(details)})"
                 body_parts.append(task_line)
             body_parts.append("")
-            body_parts.append("> [!tip] Quadro visual")
-            body_parts.append("> Veja as tarefas no formato Kanban: [[{tarefas_link}|Tarefas]]")
-        else:
-            body_parts.append("Nenhuma tarefa identificada nesta reuniao.")
-        body_parts.append("")
 
         # Link para transcrição
         body_parts.append("## Transcricao Completa\n")
         body_parts.append("> [!info] Transcricao original")
-        body_parts.append("> [[{transcricao_link}|Transcricao]]")
+        body_parts.append(f"> [[{transcricao_link}|Transcricao]]")
         body_parts.append("")
 
         return "\n".join(body_parts)
@@ -223,7 +230,7 @@ duration: "{duration}"
         for seg in transcript.segments:
             timestamp = format_timestamp(seg.start)
             lines.append(f"**[{timestamp}]** {seg.text}  ")
-        path.write_text("\n".join(lines), encoding="utf-8")
+        atomic_write_text(path, "\n".join(lines))
 
     @staticmethod
     def _format_yaml_list(items: list[str]) -> str:

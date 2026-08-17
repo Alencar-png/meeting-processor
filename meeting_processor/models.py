@@ -32,6 +32,11 @@ class ActionItem(BaseModel):
 
 class MeetingSummary(BaseModel):
     executive_summary: str
+    # Resumo narrativo detalhado da reunião (vários parágrafos): contexto,
+    # discussões, argumentos e conclusões. É o "resumo geral" — o foco.
+    detailed_summary: str = ""
+    # Decisões concretas tomadas na reunião.
+    decisions: list[str] = []
     time_windows: list[TimeWindowSummary]
     action_items: list[ActionItem]
     participants: list[str]

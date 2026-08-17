@@ -38,19 +38,36 @@ from .utils import format_duration, format_timestamp
 
 logger = logging.getLogger(__name__)
 
+
+class SummaryParseError(RuntimeError):
+    """Resposta do LLM não continha JSON válido/parseável.
+
+    Levantada (em vez de retornar um resumo vazio silencioso) para que o
+    pipeline trate como falha real: a reunião NÃO é marcada como processada
+    e pode ser reprocessada. Antes, um JSON truncado virava sucesso com
+    resumo vazio e a reunião era perdida silenciosamente.
+    """
+
+
 SYSTEM_PROMPT = """\
 Você é um assistente especializado em resumir reuniões transcritas em português brasileiro.
-Analise a transcrição fornecida e produza uma análise estruturada em JSON.
+Seu foco PRINCIPAL é produzir um RESUMO RICO E DETALHADO da reunião — uma ata completa
+que permita a alguém que não participou entender tudo o que foi discutido, decidido e
+concluído. As tarefas são uma saída SECUNDÁRIA: extraia-as apenas se realmente existirem.
+
+Analise a transcrição e produza uma análise estruturada em JSON.
 
 Responda APENAS com JSON válido, sem markdown, sem blocos de código. O JSON deve seguir esta estrutura exata:
 
 {
-  "executive_summary": "Resumo executivo de 3-5 frases",
+  "executive_summary": "Resumo executivo em 1 parágrafo denso (4 a 6 frases) com o panorama geral, os assuntos centrais e as conclusões da reunião.",
+  "detailed_summary": "Resumo DETALHADO e narrativo, em VÁRIOS parágrafos separados por linhas em branco. Cubra em profundidade: o contexto e o objetivo da reunião; cada assunto discutido, com os argumentos, pontos de vista e problemas levantados; o encadeamento da conversa; e as conclusões. Escreva de forma fluida e completa, como uma ata detalhada. NÃO seja econômico — este é o conteúdo mais importante.",
+  "decisions": ["Cada decisão concreta tomada na reunião, uma por item"],
   "time_windows": [
     {
       "start_minutes": 0,
       "end_minutes": 5,
-      "summary": "Resumo do que foi discutido neste período"
+      "summary": "Resumo detalhado do que foi discutido neste período, com contexto suficiente para ser útil isoladamente."
     }
   ],
   "action_items": [
@@ -67,12 +84,14 @@ Responda APENAS com JSON válido, sem markdown, sem blocos de código. O JSON de
 }
 
 Regras:
-- O resumo executivo deve capturar as decisões principais e o tom geral da reunião.
-- Cada time_window cobre um bloco de {chunk_minutes} minutos da reunião.
-- Extraia TODAS as tarefas, ações e compromissos mencionados, mesmo os implícitos.
+- PRIORIZE os campos "executive_summary" e "detailed_summary" — eles são o objetivo central.
+- O "detailed_summary" deve ter substância real: prefira ser completo a ser breve.
+- Cada time_window cobre um bloco de {chunk_minutes} minutos e deve ser informativo.
+- Liste em "decisions" apenas decisões efetivamente tomadas (vazio se não houver).
+- Em "action_items", extraia apenas tarefas/compromissos reais e explícitos. Não invente
+  tarefas para "preencher": se a reunião não gerou tarefas, retorne lista vazia.
 - Se não conseguir identificar participantes pelo nome, use "Participante 1", etc.
-- Se não houver tarefas, retorne uma lista vazia para action_items.
-- Tópicos principais devem ser 3-5 temas centrais discutidos.\
+- Tópicos principais devem ser 3-6 temas centrais discutidos.\
 """
 
 
@@ -113,21 +132,17 @@ class _BaseSummarizer:
             self.config.summary_chunk_minutes,
         )
 
-        user_prompt = (
-            f"Arquivo de origem: {source_filename}\n"
-            f"Duração total: {format_duration(transcript.duration)}\n\n"
-            f"--- TRANSCRIÇÃO ---\n\n{chunked_text}"
-        )
-
-        system_prompt = SYSTEM_PROMPT.replace(
-            "{chunk_minutes}", str(self.config.summary_chunk_minutes)
-        )
-
-        logger.info(
-            "Enviando transcrição ao provedor '%s' para resumo...", self.provider_name
-        )
-        response_text = self._call_llm(system_prompt, user_prompt)
-        summary = self._parse_response(response_text)
+        # Reuniões curtas: 1 chamada (mais barato, sem perda de contexto).
+        # Reuniões longas: map-reduce, para não truncar nem estourar o contexto.
+        threshold = self.config.summary_map_reduce_threshold_chars
+        if len(chunked_text) <= threshold:
+            summary = self._summarize_single(chunked_text, source_filename, transcript)
+        else:
+            logger.info(
+                "Transcrição longa (%d chars > %d) — resumindo por map-reduce.",
+                len(chunked_text), threshold,
+            )
+            summary = self._summarize_map_reduce(transcript, source_filename)
 
         logger.info(
             "Resumo gerado (%s): %d janelas, %d tarefas, %d participantes.",
@@ -137,6 +152,129 @@ class _BaseSummarizer:
             len(summary.participants),
         )
         return summary
+
+    def _summarize_single(
+        self, chunked_text: str, source_filename: str, transcript: Transcript
+    ) -> MeetingSummary:
+        user_prompt = (
+            f"Arquivo de origem: {source_filename}\n"
+            f"Duração total: {format_duration(transcript.duration)}\n\n"
+            f"--- TRANSCRIÇÃO ---\n\n{chunked_text}"
+        )
+        system_prompt = SYSTEM_PROMPT.replace(
+            "{chunk_minutes}", str(self.config.summary_chunk_minutes)
+        )
+        logger.info(
+            "Enviando transcrição ao provedor '%s' para resumo...", self.provider_name
+        )
+        return self._parse_response(self._call_llm(system_prompt, user_prompt))
+
+    def _summarize_map_reduce(
+        self, transcript: Transcript, source_filename: str
+    ) -> MeetingSummary:
+        blocks = self._split_segments(
+            transcript.segments,
+            self.config.summary_map_reduce_chunk_chars,
+            self.config.summary_chunk_minutes,
+        )
+        system_prompt = SYSTEM_PROMPT.replace(
+            "{chunk_minutes}", str(self.config.summary_chunk_minutes)
+        )
+        partials: list[MeetingSummary] = []
+        for i, block_text in enumerate(blocks, start=1):
+            logger.info("Map-reduce: resumindo bloco %d/%d...", i, len(blocks))
+            user_prompt = (
+                f"Arquivo de origem: {source_filename} (parte {i}/{len(blocks)})\n"
+                f"Duração total: {format_duration(transcript.duration)}\n\n"
+                f"Este é um TRECHO da reunião. Resuma apenas o que aparece aqui.\n\n"
+                f"--- TRANSCRIÇÃO (parcial) ---\n\n{block_text}"
+            )
+            # Resiliência: se um bloco isolado falhar (ex.: JSON truncado), não
+            # perde a reunião inteira — ignora esse trecho e segue com o resto.
+            try:
+                partials.append(self._parse_response(self._call_llm(system_prompt, user_prompt)))
+            except SummaryParseError:
+                logger.warning("Bloco %d/%d não parseou; ignorando esse trecho.", i, len(blocks))
+        if not partials:
+            raise SummaryParseError("Nenhum trecho da reunião pôde ser resumido.")
+        return self._merge_partials(partials)
+
+    def _split_segments(
+        self,
+        segments: list[TranscriptSegment],
+        max_chars: int,
+        chunk_minutes: int,
+    ) -> list[str]:
+        """Divide os segmentos em blocos de ~``max_chars`` para o map-reduce."""
+        if not segments:
+            return ["(Transcrição vazia)"]
+
+        blocks: list[str] = []
+        current: list[TranscriptSegment] = []
+        current_len = 0
+        for seg in segments:
+            seg_len = len(seg.text) + 20  # ~timestamp + indentação
+            if current and current_len + seg_len > max_chars:
+                blocks.append(self._build_chunked_transcript(current, chunk_minutes))
+                current = []
+                current_len = 0
+            current.append(seg)
+            current_len += seg_len
+        if current:
+            blocks.append(self._build_chunked_transcript(current, chunk_minutes))
+        return blocks
+
+    @staticmethod
+    def _merge_partials(partials: list[MeetingSummary]) -> MeetingSummary:
+        """Consolida resumos parciais (map-reduce) num único ``MeetingSummary``.
+
+        Reduce puramente programático (sem chamada extra de LLM): concatena
+        janelas e tarefas, une participantes/tópicos sem duplicar, e junta os
+        resumos executivos de cada trecho.
+        """
+        exec_parts: list[str] = []
+        detailed_parts: list[str] = []
+        decisions: list[str] = []
+        time_windows: list[TimeWindowSummary] = []
+        action_items: list[ActionItem] = []
+        participants: list[str] = []
+        key_topics: list[str] = []
+        seen_p: set[str] = set()
+        seen_t: set[str] = set()
+        seen_d: set[str] = set()
+
+        for p in partials:
+            if p.executive_summary.strip():
+                exec_parts.append(p.executive_summary.strip())
+            if p.detailed_summary.strip():
+                detailed_parts.append(p.detailed_summary.strip())
+            time_windows.extend(p.time_windows)
+            action_items.extend(p.action_items)
+            for decision in p.decisions:
+                key = decision.strip().lower()
+                if key and key not in seen_d:
+                    seen_d.add(key)
+                    decisions.append(decision)
+            for name in p.participants:
+                key = name.strip().lower()
+                if key and key not in seen_p:
+                    seen_p.add(key)
+                    participants.append(name)
+            for topic in p.key_topics:
+                key = topic.strip().lower()
+                if key and key not in seen_t:
+                    seen_t.add(key)
+                    key_topics.append(topic)
+
+        return MeetingSummary(
+            executive_summary="\n\n".join(exec_parts),
+            detailed_summary="\n\n".join(detailed_parts),
+            decisions=decisions,
+            time_windows=time_windows,
+            action_items=action_items,
+            participants=participants,
+            key_topics=key_topics,
+        )
 
     # Hook que cada provedor implementa -----------------------------------
 
@@ -176,26 +314,36 @@ class _BaseSummarizer:
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
         cleaned = re.sub(r"\s*```$", "", cleaned)
 
-        # Modelos locais às vezes adicionam texto antes/depois do JSON.
-        # Se o JSON direto falhar, tenta extrair o primeiro objeto {...}.
+        # strict=False tolera caracteres de controle (quebras de linha literais)
+        # dentro das strings — comum quando o resumo detalhado tem vários
+        # parágrafos e o modelo não escapa os \n.
+        # Modelos locais às vezes adicionam texto antes/depois do JSON: se o
+        # parse direto falhar, tenta extrair o primeiro objeto {...}.
         try:
-            data = json.loads(cleaned)
+            data = json.loads(cleaned, strict=False)
         except json.JSONDecodeError:
             match = re.search(r"\{.*\}", cleaned, re.DOTALL)
             if match:
                 try:
-                    data = json.loads(match.group(0))
+                    data = json.loads(match.group(0), strict=False)
                 except json.JSONDecodeError as e:
                     logger.error("Resposta do LLM não é JSON válido: %s", e)
                     logger.debug("Resposta bruta: %s", response_text[:500])
-                    return self._empty_summary()
+                    raise SummaryParseError(
+                        "Resposta do LLM não é JSON válido "
+                        "(possível truncamento por max_tokens ou contexto)."
+                    ) from e
             else:
                 logger.error("Não foi possível extrair JSON da resposta do LLM.")
                 logger.debug("Resposta bruta: %s", response_text[:500])
-                return self._empty_summary()
+                raise SummaryParseError(
+                    "Não foi possível extrair JSON da resposta do LLM."
+                ) from None
 
         return MeetingSummary(
             executive_summary=data.get("executive_summary", ""),
+            detailed_summary=data.get("detailed_summary", ""),
+            decisions=data.get("decisions", []),
             time_windows=[
                 TimeWindowSummary(**tw) for tw in data.get("time_windows", [])
             ],
@@ -204,15 +352,6 @@ class _BaseSummarizer:
             key_topics=data.get("key_topics", []),
         )
 
-    @staticmethod
-    def _empty_summary() -> MeetingSummary:
-        return MeetingSummary(
-            executive_summary="Erro ao processar resumo da reunião.",
-            time_windows=[],
-            action_items=[],
-            participants=[],
-            key_topics=[],
-        )
 
 # ---------------------------------------------------------------------------
 # Provedor: Claude (Anthropic API)
@@ -233,7 +372,18 @@ class AnthropicSummarizer(_BaseSummarizer):
             )
         self.client = anthropic.Anthropic(api_key=config.anthropic_api_key)
 
+    # Erros transitórios que justificam retry com backoff. Diferente do
+    # comportamento antigo (só RateLimitError), inclui falhas de conexão,
+    # timeout e erros 5xx/overloaded da API.
+    _RETRYABLE = (
+        anthropic.RateLimitError,
+        anthropic.APIConnectionError,
+        anthropic.APITimeoutError,
+        anthropic.InternalServerError,
+    )
+
     def _call_llm(self, system_prompt: str, user_prompt: str, retries: int = 3) -> str:
+        last_err: Exception | None = None
         for attempt in range(retries):
             try:
                 message = self.client.messages.create(
@@ -248,22 +398,38 @@ class AnthropicSummarizer(_BaseSummarizer):
                     ],
                     messages=[{"role": "user", "content": user_prompt}],
                 )
-                return message.content[0].text
+                # Extrai apenas os blocos de texto. Modelos com extended
+                # thinking retornam um ThinkingBlock antes do TextBlock — pegar
+                # content[0] cegamente quebraria (ThinkingBlock não tem .text).
+                text_parts = [
+                    block.text
+                    for block in message.content
+                    if getattr(block, "type", None) == "text"
+                ]
+                if not text_parts:
+                    raise RuntimeError("Claude não retornou bloco de texto.")
+                return "".join(text_parts)
 
-            except anthropic.RateLimitError:
-                if attempt < retries - 1:
-                    wait = 2 ** (attempt + 1)
-                    logger.warning("Rate limit atingido. Aguardando %ds...", wait)
-                    time.sleep(wait)
-                else:
-                    raise
             except anthropic.AuthenticationError as e:
                 raise RuntimeError(
                     "Chave da API Anthropic inválida. "
                     "Verifique o arquivo .env com ANTHROPIC_API_KEY."
                 ) from e
+            except self._RETRYABLE as e:
+                last_err = e
+                if attempt < retries - 1:
+                    wait = 2 ** (attempt + 1)
+                    logger.warning(
+                        "Erro transitório na API Anthropic (%s). Retry em %ds (%d/%d)...",
+                        type(e).__name__, wait, attempt + 1, retries,
+                    )
+                    time.sleep(wait)
+                else:
+                    raise
 
-        raise RuntimeError("Falha ao chamar API Anthropic após todas as tentativas.")
+        raise RuntimeError(
+            f"Falha ao chamar API Anthropic após {retries} tentativas: {last_err}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -338,11 +504,21 @@ class OllamaSummarizer(_BaseSummarizer):
                 return content
 
             except httpx.ConnectError as e:
-                raise RuntimeError(
-                    f"Não foi possível conectar ao Ollama em {self.base_url}. "
-                    f"Verifique se o serviço está rodando "
-                    f"(`ollama serve` ou app do Ollama aberto)."
-                ) from e
+                # Ollama pode estar subindo — vale tentar de novo, não falhar na hora.
+                last_err = e
+                if attempt < retries - 1:
+                    wait = 2 ** (attempt + 1)
+                    logger.warning(
+                        "Ollama indisponível (conexão). Retry em %ds (%d/%d)...",
+                        wait, attempt + 1, retries,
+                    )
+                    time.sleep(wait)
+                else:
+                    raise RuntimeError(
+                        f"Não foi possível conectar ao Ollama em {self.base_url}. "
+                        f"Verifique se o serviço está rodando "
+                        f"(`ollama serve` ou app do Ollama aberto)."
+                    ) from e
             except httpx.HTTPError as e:
                 last_err = e
                 if attempt < retries - 1:
@@ -434,10 +610,19 @@ class OpenAISummarizer(_BaseSummarizer):
                 return choices[0].get("message", {}).get("content", "")
 
             except httpx.ConnectError as e:
-                raise RuntimeError(
-                    f"Não foi possível conectar a {self.base_url}. "
-                    f"Verifique openai_base_url."
-                ) from e
+                last_err = e
+                if attempt < retries - 1:
+                    wait = 2 ** (attempt + 1)
+                    logger.warning(
+                        "Conexão com %s falhou. Retry em %ds (%d/%d)...",
+                        self.base_url, wait, attempt + 1, retries,
+                    )
+                    time.sleep(wait)
+                else:
+                    raise RuntimeError(
+                        f"Não foi possível conectar a {self.base_url}. "
+                        f"Verifique openai_base_url."
+                    ) from e
             except httpx.HTTPError as e:
                 last_err = e
                 if attempt < retries - 1:
@@ -520,9 +705,18 @@ class GeminiSummarizer(_BaseSummarizer):
                 return text
 
             except httpx.ConnectError as e:
-                raise RuntimeError(
-                    f"Não foi possível conectar ao Gemini em {self.base_url}."
-                ) from e
+                last_err = e
+                if attempt < retries - 1:
+                    wait = 2 ** (attempt + 1)
+                    logger.warning(
+                        "Conexão com o Gemini falhou. Retry em %ds (%d/%d)...",
+                        wait, attempt + 1, retries,
+                    )
+                    time.sleep(wait)
+                else:
+                    raise RuntimeError(
+                        f"Não foi possível conectar ao Gemini em {self.base_url}."
+                    ) from e
             except httpx.HTTPError as e:
                 last_err = e
                 if attempt < retries - 1:
@@ -598,5 +792,6 @@ __all__ = [
     "GeminiSummarizer",
     "OllamaSummarizer",
     "SummarizerProtocol",
+    "SummaryParseError",
     "SYSTEM_PROMPT",
 ]

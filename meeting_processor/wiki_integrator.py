@@ -1,8 +1,6 @@
 """Integração com a estrutura wiki do claude-obsidian."""
 
 import logging
-from datetime import datetime
-from pathlib import Path
 
 from .config import Settings
 

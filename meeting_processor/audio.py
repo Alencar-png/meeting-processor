@@ -1,5 +1,6 @@
 """Extração de áudio de arquivos de vídeo usando ffmpeg."""
 
+import hashlib
 import logging
 import subprocess
 import sys
@@ -71,7 +72,11 @@ def extract_audio(video_path: Path, config: Settings) -> Path:
             f"ffmpeg não encontrado no PATH. {_ffmpeg_install_hint()}"
         )
 
-    output_path = config.temp_path / f"{video_path.stem}.wav"
+    # Nome do WAV inclui um hash curto do caminho completo do vídeo. Assim
+    # dois vídeos de mesmo nome (em pastas diferentes) processados em paralelo
+    # não colidem no mesmo arquivo temporário.
+    path_hash = hashlib.sha256(str(video_path).encode("utf-8")).hexdigest()[:8]
+    output_path = config.temp_path / f"{video_path.stem}.{path_hash}.wav"
     config.temp_path.mkdir(parents=True, exist_ok=True)
 
     logger.info("Extraindo áudio de %s...", video_path.name)
@@ -91,7 +96,15 @@ def extract_audio(video_path: Path, config: Settings) -> Path:
             capture_output=True,
             text=True,
             check=True,
+            timeout=config.ffmpeg_timeout,
         )
+    except subprocess.TimeoutExpired as e:
+        # Sem timeout, um vídeo corrompido travaria o worker indefinidamente.
+        output_path.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"ffmpeg excedeu o tempo limite ({config.ffmpeg_timeout:.0f}s) "
+            f"em {video_path.name}. Arquivo possivelmente corrompido."
+        ) from e
     except subprocess.CalledProcessError as e:
         raise RuntimeError(
             f"Falha ao extrair áudio: {e.stderr}"

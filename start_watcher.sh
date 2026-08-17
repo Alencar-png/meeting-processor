@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# Meeting Processor - inicia watcher + servidor de controle
+# Meeting Processor - inicia o watcher (monitora a pasta do OBS)
 # Equivalente Linux/macOS de start_watcher.bat
 # ============================================================
 set -e
@@ -12,4 +12,4 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
     exit 1
 fi
 
-exec python3 -m meeting_processor serve
+exec python3 -m meeting_processor watch

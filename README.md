@@ -14,7 +14,8 @@
 2. Ele **extrai o áudio** (ffmpeg) e **transcreve** (Whisper).
 3. Opcionalmente **resume** com uma LLM (Claude API ou Ollama local) e gera
    nota, lista de tarefas e quadro Kanban.
-4. Você lê o resultado pelo **navegador** ou pelo **Obsidian**.
+4. O resultado são arquivos Markdown em `vault/` — leia com o Obsidian ou
+   qualquer editor de texto.
 
 Você escolhe **quais etapas rodar** — pode usar só a transcrição, por exemplo.
 
@@ -96,7 +97,6 @@ OPENAI_API_KEY=sk-...
 Para **Ollama**, instale e baixe um modelo (`ollama pull qwen2.5:14b`), depois
 use `MEETING_LLM_PROVIDER=local`.
 
-> Você também troca de provedor pela interface web, sem editar arquivos.
 > Sem o passo 4, o sistema funciona em **modo só transcrição**.
 
 **Qualquer outro modelo do mercado** — o provedor `openai` aceita qualquer
@@ -113,29 +113,23 @@ serviço compatível com a API da OpenAI: basta trocar `MEETING_OPENAI_BASE_URL`
 
 ## Como usar
 
-A forma mais simples é pelo **navegador**:
+### App desktop — solte o vídeo e pronto
 
 ```bash
-python -m meeting_processor web
+cd desktop && npm install && npm start
 ```
 
-Abra <http://127.0.0.1:8765>. Na página **Configuração** você define, com cliques:
+Arraste um vídeo para a janela: ele transcreve e grava `.md` e `.txt` na pasta
+que você escolher. Dois motores, alternáveis na própria janela:
 
-- a **pasta do OBS** a monitorar (campo editável);
-- **quais etapas rodar** (Transcrição é fixa; Resumo, Nota, Kanban e Wiki são opcionais);
-- o **provedor de LLM** (Claude ou Ollama);
-- ligar/desligar o **watcher** (monitoramento automático).
+- **GPU** (padrão) — whisper.cpp com Vulkan; ~11x mais rápido que tempo real
+  numa Radeon RX 9060 XT. Uma reunião de 1 h sai em ~5 min.
+- **Docker** — container CPU-only, para quando não há GPU disponível.
 
-### Atalhos prontos
+Detalhes e como compilar o whisper.cpp com Vulkan em
+[`desktop/README.md`](desktop/README.md).
 
-| Sistema | Monitorar | Abrir navegador |
-|---------|-----------|-----------------|
-| Windows | `start_watcher.bat` | `start_web.bat` |
-| macOS/Linux | `./start_watcher.sh` | `./start_web.sh` |
-
-*(no macOS/Linux, rode uma vez `chmod +x start_*.sh`)*
-
-### Pela linha de comando
+### Linha de comando
 
 ```bash
 # Processa um arquivo já gravado
@@ -147,8 +141,35 @@ python -m meeting_processor process reuniao.mkv --only-transcribe
 # Desligar etapas específicas
 python -m meeting_processor process reuniao.mkv --no-kanban --no-wiki
 
+# Só transcrever, gravando numa pasta qualquer (fora do vault).
+# Cria ./saida/<nome>/ com a transcrição e o meeting.json (metadados).
+python -m meeting_processor transcribe reuniao.mkv --output-dir ./saida --formats md,txt
+python -m meeting_processor transcribe reuniao.mkv --output-dir ./saida --name "Reuniao com o cliente"
+
 # Monitorar a pasta do OBS continuamente
 python -m meeting_processor watch
+
+# Reindexar no SQLite as reuniões já existentes no vault
+python -m meeting_processor reindex
+```
+
+### Atalhos prontos
+
+| Sistema | Monitorar |
+|---------|-----------|
+| Windows | `start_watcher.bat` (ou `start_watcher_silent.vbs`, sem janela) |
+| macOS/Linux | `./start_watcher.sh` |
+
+*(no macOS/Linux, rode uma vez `chmod +x start_watcher.sh`)*
+
+### Acompanhar o processamento
+
+O progresso vai para o console e para `meeting_processor.log`. O estado de
+cada job também fica na tabela `jobs` do SQLite (`meeting_processor.db`):
+
+```bash
+sqlite3 meeting_processor.db \
+  "SELECT file, status, stage, progress, detail FROM jobs ORDER BY id DESC LIMIT 10;"
 ```
 
 ---
@@ -162,15 +183,15 @@ Cada reunião vira uma pasta em `vault/wiki/reunioes/<data hora - nome>/` com:
 - `Tarefas - *.md` — quadro Kanban (se ligado);
 - nota central que liga tudo no grafo do Obsidian.
 
-Abra a pasta `vault/` como **vault do Obsidian**, ou use o **navegador** — os
-dois leem os mesmos arquivos.
+Abra a pasta `vault/` como **vault do Obsidian** ou leia os arquivos com
+qualquer editor de Markdown.
 
 ---
 
 ## Escolher o que rodar
 
 Áudio e transcrição **sempre** rodam. As demais são opcionais e podem ser
-ligadas/desligadas pela interface, pelo `config.yaml` ou por variável de ambiente:
+ligadas/desligadas pelo `config.yaml` ou por variável de ambiente:
 
 | Etapa | config.yaml | Variável de ambiente | Depende de |
 |-------|-------------|----------------------|------------|
@@ -186,14 +207,31 @@ Desligar o **Resumo** equivale ao modo "só transcrição".
 ## Acelerar com GPU (opcional)
 
 O backend padrão (`openai-whisper`) é simples e funciona em qualquer máquina,
-mas pode ser lento sem GPU. Para máxima velocidade, use o **whisper.cpp**:
+mas é lento sem GPU. Para máxima velocidade, use o **whisper.cpp**:
 
-1. Baixe o binário em <https://github.com/ggerganov/whisper.cpp/releases> e
-   coloque em `.whisper-cpp/` (ou deixe no PATH do sistema).
+1. Coloque o `whisper-cli` em `.whisper-cpp/` (ou deixe no PATH). Os binários
+   oficiais em <https://github.com/ggml-org/whisper.cpp/releases> cobrem CPU e
+   NVIDIA; para **GPU AMD ou Intel**, compile com Vulkan — passo a passo em
+   [`desktop/README.md`](desktop/README.md).
 2. Baixe um modelo GGML em
    <https://huggingface.co/ggerganov/whisper.cpp/tree/main> para `.models/`.
+   `ggml-large-v3-turbo.bin` é o melhor equilíbrio.
 3. No `config.yaml`: `whisper_backend: "cpp"` (ou deixe `"auto"`, que usa o
    whisper.cpp automaticamente quando ele está presente).
+
+O log diz qual dispositivo está em uso (`whisper.cpp usando GPU: …`). Sem essa
+linha, a transcrição está na CPU.
+
+Referência medida numa Radeon RX 9060 XT, `large-v3-turbo`, áudio de 5 min:
+
+| Execução | Tempo |
+|----------|-------|
+| GPU (Vulkan) | 27 s |
+| CPU, 16 threads | 153 s |
+| CPU, 4 threads (padrão do whisper.cpp) | ~10 min |
+
+Por padrão o whisper.cpp usa só 4 threads; o projeto agora passa todos os
+núcleos (ajustável em `whisper_threads` no `config.yaml`).
 
 ---
 
@@ -206,7 +244,7 @@ mas pode ser lento sem GPU. Para máxima velocidade, use o **whisper.cpp**:
 | `Chave da API Anthropic inválida` | Confira `ANTHROPIC_API_KEY` no `.env` |
 | `Não foi possível conectar ao Ollama` | Inicie o Ollama (`ollama serve`) |
 | `Ollama respondeu 404` | Baixe o modelo: `ollama pull qwen2.5:14b` |
-| Navegador mostra 0 reuniões | Confira a pasta do OBS em **Configuração** e se há vídeos lá |
+| Nenhuma reunião é detectada | Confira `watch_dir` no `config.yaml` e se há vídeos na pasta |
 
 Logs detalhados ficam em `meeting_processor.log`.
 
@@ -222,8 +260,8 @@ Estrutura principal:
 
 ```
 meeting_processor/
-├── __main__.py        # CLI (watch / web / process)
-├── config.py          # configuração (YAML + .env + interface)
+├── __main__.py        # CLI (watch / process / transcribe / reindex)
+├── config.py          # configuração (YAML + .env)
 ├── audio.py           # extração de áudio (ffmpeg)
 ├── transcriber.py     # Whisper (openai-whisper / whisper.cpp)
 ├── summarizer.py      # resumo (Claude / OpenAI / Gemini / Ollama)
@@ -231,13 +269,20 @@ meeting_processor/
 ├── kanban.py          # quadros Kanban
 ├── pipeline.py        # orquestra as etapas escolhidas
 ├── watcher.py         # monitora a pasta do OBS
-├── utils.py           # helpers compartilhados
-└── web/               # interface no navegador (FastAPI + HTMX)
+├── progress.py        # progresso dos jobs (log + fila no SQLite)
+├── events.py          # eventos JSONL consumidos pelo app desktop
+├── media_info.py      # data da gravação e duração (ffprobe)
+├── transcript_export.py  # grava .md/.txt + meeting.json na pasta da reunião
+├── db.py              # estado estruturado (SQLite)
+├── vault_index.py     # leitura das reuniões já gravadas no vault
+└── utils.py           # helpers compartilhados
+
+desktop/               # app Electron (drag-and-drop → container → arquivos)
+Dockerfile             # imagem de transcrição (whisper.cpp + ffmpeg, CPU)
 ```
 
 Documentos extras: [`docs/obsidian.md`](docs/obsidian.md),
-[`docs/llm-local.md`](docs/llm-local.md),
-[`docs/frontend-local.md`](docs/frontend-local.md).
+[`docs/llm-local.md`](docs/llm-local.md).
 
 ---
 

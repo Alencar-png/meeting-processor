@@ -1,0 +1,13 @@
+{
+  "name": "meeting-processor-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "App desktop do Meeting Processor: solte um vídeo, receba a transcrição.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^43.4.0"
+  }
+}

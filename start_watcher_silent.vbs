@@ -6,4 +6,4 @@
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set WshShell = CreateObject("WScript.Shell")
 WshShell.CurrentDirectory = fso.GetParentFolderName(WScript.ScriptFullName)
-WshShell.Run "pythonw -m meeting_processor serve", 0, False
+WshShell.Run "pythonw -m meeting_processor watch", 0, False

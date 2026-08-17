@@ -1,10 +1,30 @@
 """Funções utilitárias compartilhadas.
 
 Centraliza helpers usados por vários módulos (formatação de tempo,
-parsing de timestamps) para evitar duplicação — DRY.
+parsing de timestamps, escrita atômica) para evitar duplicação — DRY.
 """
 
 from __future__ import annotations
+
+import os
+from pathlib import Path
+
+
+def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
+    """Escreve texto de forma atômica (grava em ``.tmp`` e faz ``os.replace``).
+
+    Evita que uma falha no meio da escrita deixe o arquivo truncado, e evita
+    que um leitor concorrente (Obsidian, outra thread, a UI web) veja conteúdo
+    parcial. ``os.replace`` é atômico dentro do mesmo filesystem.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(content, encoding=encoding)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def format_duration(seconds: float) -> str:

@@ -1,0 +1,26 @@
+# Contexto de build enxuto: só o pacote Python e a config entram na imagem.
+.git/
+.github/
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# App desktop (roda no host, não no container)
+desktop/
+
+# Conteúdo e estado local
+vault/
+docs/
+tests/
+.models/
+.whisper-cpp/
+.processed/
+.tmp/
+*.db
+*.log
+.env

@@ -5,7 +5,11 @@ from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
+
+VALID_LLM_PROVIDERS = {"anthropic", "openai", "gemini", "local", "ollama", "none"}
+VALID_WHISPER_BACKENDS = {"auto", "cpp", "openai"}
+VALID_LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 
 class KanbanColumns(BaseModel):
@@ -17,13 +21,21 @@ class KanbanColumns(BaseModel):
 class Settings(BaseModel):
     # Caminhos
     # watch_dir vazio => auto-detecta ~/Videos/OBS (resolvido em load_config).
-    # Editável pela interface web ou via env MEETING_WATCH_DIR.
+    # Editável no config.yaml ou via env MEETING_WATCH_DIR.
     watch_dir: str = ""
     vault_dir: str = "./vault"
 
     # Monitoramento
     watch_extensions: list[str] = [".mkv", ".mp4", ".webm"]
     file_stable_seconds: int = 10
+    # Nº de reuniões processadas em paralelo. Padrão 1 (serial, seguro).
+    # Aumente se a máquina tiver CPU/GPU/RAM de sobra — a transcrição é o
+    # componente que mais consome recursos.
+    watch_max_workers: int = 1
+    # Reprocessamento automático de reuniões que falham por causa transitória
+    # (rate limit, Ollama offline, JSON truncado). 0 desliga.
+    max_retries: int = 2
+    retry_delay_seconds: float = 30.0
 
     # Whisper
     whisper_model: str = "base"
@@ -39,6 +51,10 @@ class Settings(BaseModel):
     # do sistema e em .whisper-cpp/ e .models/ dentro do projeto.
     whisper_cli_path: str = ""
     whisper_model_path: str = ""
+    # Threads do whisper.cpp. 0 => usa todos os núcleos disponíveis.
+    # O padrão do próprio whisper.cpp é 4, o que desperdiça a maior parte
+    # de uma CPU moderna — a transcrição é o gargalo do pipeline.
+    whisper_threads: int = 0
 
     # ---------------------------------------------------------------
     # LLM (provedor de resumo)
@@ -53,7 +69,7 @@ class Settings(BaseModel):
 
     # Claude API
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-20250514"
+    anthropic_model: str = "claude-sonnet-5"
 
     # OpenAI e qualquer serviço compatível com a API da OpenAI
     # (OpenRouter, Groq, DeepSeek, xAI/Grok, Mistral, Azure, ...).
@@ -80,7 +96,16 @@ class Settings(BaseModel):
 
     # Comum a todos os provedores
     summary_chunk_minutes: int = 5
-    max_tokens_summary: int = 4096
+    # Espaço de saída do resumo. Alto porque o foco é um resumo detalhado e
+    # modelos com extended thinking (ex.: Claude 5) consomem parte do teto —
+    # 8192 truncava o JSON de blocos grandes no map-reduce. Só paga o que gera.
+    max_tokens_summary: int = 16000
+    # Acima deste tamanho de transcrição (caracteres), o resumo usa
+    # map-reduce (resume por blocos e consolida) em vez de uma única
+    # chamada — evita truncamento/estouro de contexto em reuniões longas.
+    summary_map_reduce_threshold_chars: int = 24000
+    # Tamanho de cada bloco no modo map-reduce (caracteres).
+    summary_map_reduce_chunk_chars: int = 16000
 
     # ---------------------------------------------------------------
     # Etapas do pipeline (áudio + transcrição sempre rodam)
@@ -105,6 +130,12 @@ class Settings(BaseModel):
     temp_dir: str = ".tmp"
     cleanup_temp: bool = True
     log_level: str = "INFO"
+
+    # Timeouts de subprocess (segundos). Evitam trava permanente se o
+    # ffmpeg ou o whisper.cpp ficarem presos num arquivo corrompido —
+    # cenário grave porque o watcher processa uma reunião por vez.
+    ffmpeg_timeout: float = 3600.0     # 1h: extração de áudio raramente passa disso
+    whisper_timeout: float = 14400.0   # 4h: transcrição longa em CPU pode ser lenta
 
     # Caminhos resolvidos
     project_root: str = ""
@@ -150,6 +181,58 @@ class Settings(BaseModel):
             "kanban": summary and self.enable_kanban,
             "wiki": summary and self.enable_wiki,
         }
+
+    # -- Validação (falha cedo, com mensagem clara) ------------------------
+
+    @field_validator("llm_provider")
+    @classmethod
+    def _check_provider(cls, v: str) -> str:
+        norm = (v or "").lower().strip()
+        if norm not in VALID_LLM_PROVIDERS:
+            raise ValueError(
+                f"llm_provider inválido: {v!r}. "
+                f"Válidos: {', '.join(sorted(VALID_LLM_PROVIDERS))}."
+            )
+        return norm
+
+    @field_validator("whisper_backend")
+    @classmethod
+    def _check_backend(cls, v: str) -> str:
+        norm = (v or "auto").lower().strip()
+        if norm not in VALID_WHISPER_BACKENDS:
+            raise ValueError(
+                f"whisper_backend inválido: {v!r}. "
+                f"Válidos: {', '.join(sorted(VALID_WHISPER_BACKENDS))}."
+            )
+        return norm
+
+    @field_validator("log_level")
+    @classmethod
+    def _check_log_level(cls, v: str) -> str:
+        norm = (v or "INFO").upper().strip()
+        if norm not in VALID_LOG_LEVELS:
+            raise ValueError(
+                f"log_level inválido: {v!r}. "
+                f"Válidos: {', '.join(sorted(VALID_LOG_LEVELS))}."
+            )
+        return norm
+
+    @field_validator(
+        "ffmpeg_timeout", "whisper_timeout", "openai_request_timeout",
+        "gemini_request_timeout", "ollama_request_timeout", "retry_delay_seconds",
+    )
+    @classmethod
+    def _check_positive_timeout(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"timeout deve ser positivo, recebido: {v}")
+        return v
+
+    @field_validator("watch_max_workers")
+    @classmethod
+    def _check_workers(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"watch_max_workers deve ser >= 1, recebido: {v}")
+        return v
 
 
 def load_config(config_path: str | None = None) -> Settings:
@@ -208,6 +291,7 @@ def load_config(config_path: str | None = None) -> Settings:
 
     int_overrides = {
         "MEETING_OLLAMA_NUM_CTX": "ollama_num_ctx",
+        "MEETING_WHISPER_THREADS": "whisper_threads",
     }
     for env_key, config_key in int_overrides.items():
         env_val = os.environ.get(env_key)

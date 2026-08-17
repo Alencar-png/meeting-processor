@@ -4,7 +4,7 @@
 # Caminhos
 # watch_dir: pasta onde o OBS salva as gravações.
 #   - Deixe em branco para detectar automaticamente ~/Videos/OBS (qualquer SO).
-#   - Pode ser definido pela interface web (Configuração) ou pela env MEETING_WATCH_DIR.
+#   - Também pode ser definido pela env MEETING_WATCH_DIR.
 #   - Aceita "~" para a home. Ex.: "~/Videos/OBS" ou "D:/Gravacoes".
 watch_dir: ""
 vault_dir: "./vault"
@@ -16,6 +16,16 @@ watch_extensions:
   - ".webm"
 file_stable_seconds: 10
 
+# Nº de reuniões processadas em paralelo. Padrão 1 (serial, seguro).
+# Aumente só se a máquina tiver CPU/GPU/RAM de sobra — a transcrição é o
+# componente mais pesado.
+watch_max_workers: 1
+
+# Reprocessamento automático de reuniões que falham por causa transitória
+# (rate limit, Ollama offline, JSON truncado do LLM). 0 desliga.
+max_retries: 2
+retry_delay_seconds: 30.0
+
 # Whisper (transcrição)
 # whisper_backend:
 #   "auto"   -> usa whisper.cpp se encontrado, senão openai-whisper (pip). Padrão.
@@ -24,20 +34,27 @@ file_stable_seconds: 10
 whisper_backend: "auto"
 whisper_model: "large"
 whisper_language: "pt"
+# "auto" deixa a lib decidir; "cuda" força GPU; "cpu" força CPU
+# (no whisper.cpp, "cpp", isso adiciona --no-gpu).
 whisper_device: "auto"
 whisper_initial_prompt: "Transcrição de reunião em português brasileiro."
+
+# Timeouts de subprocess (segundos). Evitam trava permanente com arquivo
+# corrompido — importante porque uma trava congela o worker.
+ffmpeg_timeout: 3600.0
+whisper_timeout: 14400.0
 
 # ----------------------------------------------------------
 # Provedor de LLM (resumo da reunião)
 # ----------------------------------------------------------
 # Valores: "anthropic" (Claude), "openai" (OpenAI/compatíveis),
 #          "gemini" (Google), "local" (Ollama) ou "none" (sem IA: só transcreve).
-# Também alterável pela interface web. Env var: MEETING_LLM_PROVIDER.
+# Env var: MEETING_LLM_PROVIDER.
 # As chaves de API ficam no .env (nunca no config.yaml).
 llm_provider: "anthropic"
 
 # Claude API — requer ANTHROPIC_API_KEY no .env
-anthropic_model: "claude-sonnet-4-20250514"
+anthropic_model: "claude-sonnet-5"
 
 # OpenAI e qualquer serviço compatível — requer OPENAI_API_KEY no .env.
 # Para usar outro serviço, troque openai_base_url:
@@ -66,7 +83,14 @@ ollama_request_timeout: 600.0
 
 # Comum a todos os provedores
 summary_chunk_minutes: 5
-max_tokens_summary: 4096
+# Alto: resumo detalhado + extended thinking (Claude 5) consome parte do teto.
+max_tokens_summary: 16000
+
+# Reuniões longas: acima deste tamanho de transcrição (caracteres) o resumo
+# usa map-reduce (resume por blocos e consolida) em vez de uma única chamada
+# — evita truncamento e estouro de contexto. Ajuste conforme o modelo.
+summary_map_reduce_threshold_chars: 24000
+summary_map_reduce_chunk_chars: 16000
 
 # Nota de reunião
 default_tags:
@@ -86,8 +110,7 @@ kanban_columns:
 # Etapas do pipeline (áudio + transcrição rodam sempre)
 # ----------------------------------------------------------
 # Desligue o resumo para o modo "só transcrição".
-# Nota/Kanban/Wiki dependem do resumo. Também editável pela
-# interface web (Configuração > Etapas do processamento).
+# Nota/Kanban/Wiki dependem do resumo.
 enable_summary: true
 enable_note: true
 enable_kanban: true

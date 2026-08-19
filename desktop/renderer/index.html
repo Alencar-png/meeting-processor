@@ -26,6 +26,9 @@
           <span>Projetos</span>
           <button class="nav-add" id="nav-new-project" type="button" title="Novo projeto">+</button>
         </div>
+        <button class="nav-item" id="nav-projects-all" data-nav="projects" type="button">
+          <span class="nav-glyph" aria-hidden="true">▦</span> Todos os projetos
+        </button>
         <div id="nav-projects"></div>
 
         <div class="nav-section"><span>Biblioteca</span></div>
@@ -80,6 +83,47 @@
             <div class="tile-list" id="home-recent"></div>
           </div>
         </div>
+      </section>
+
+      <!-- ---- Projetos (módulo) ---- -->
+      <section class="view view-projects">
+        <header class="mod-head">
+          <div>
+            <h1>Projetos</h1>
+            <p class="mod-sub" id="projects-sub"></p>
+          </div>
+          <div class="mod-tools">
+            <div class="viewswitch" role="group" aria-label="Forma de visualização">
+              <button class="vs" id="vs-grid" type="button" data-mode="grid"
+                      aria-pressed="true">Blocos</button>
+              <button class="vs" id="vs-table" type="button" data-mode="table"
+                      aria-pressed="false">Tabela</button>
+            </div>
+            <button class="btn solid" id="projects-new" type="button">Novo projeto</button>
+          </div>
+        </header>
+
+        <div class="proj-grid" id="projects-grid"></div>
+
+        <div class="table-wrap" id="projects-table-wrap" hidden>
+          <table class="datatable" id="projects-table">
+            <thead>
+              <tr>
+                <th data-sort="name">Projeto</th>
+                <th data-sort="meetings" class="num-col">Reuniões</th>
+                <th data-sort="openTasks" class="num-col">Tarefas abertas</th>
+                <th data-sort="lastMeetingAt">Última reunião</th>
+                <th>Contexto</th>
+                <th class="acts-col"></th>
+              </tr>
+            </thead>
+            <tbody id="projects-tbody"></tbody>
+          </table>
+        </div>
+
+        <p class="empty" id="projects-empty" hidden>
+          Nenhum projeto ainda. Crie o primeiro para reunir reuniões, tarefas e documentos.
+        </p>
       </section>
 
       <!-- ---- Projeto ---- -->

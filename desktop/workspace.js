@@ -62,8 +62,12 @@ function listProjects(dir) {
   const abertas = tasks.openCountByProject(dir);
   const reunioes = library.listMeetings(dir);
   const contagem = {};
+  const ultima = {};
   for (const m of reunioes) {
-    if (m.group) contagem[m.group.id] = (contagem[m.group.id] || 0) + 1;
+    if (!m.group) continue;
+    contagem[m.group.id] = (contagem[m.group.id] || 0) + 1;
+    // A data mais recente é o sinal de projeto vivo na listagem.
+    ultima[m.group.id] = Math.max(ultima[m.group.id] || 0, recordedAt(m));
   }
   return groups.listGroups(dir).map((g) => ({
     id: g.id,
@@ -71,6 +75,7 @@ function listProjects(dir) {
     context: g.context || '',
     meetings: contagem[g.id] || 0,
     openTasks: abertas[g.id] || 0,
+    lastMeetingAt: ultima[g.id] || 0,
   }));
 }
 

@@ -68,10 +68,12 @@ function setView(next) {
   $('top-record').hidden = next !== 'project';
   renderSidebar();
   if (next === 'home') renderHome();
+  if (next === 'projects') renderProjects();
   if (next === 'library') renderLibrary();
   if (next === 'settings') renderSettings();
   $('crumb').textContent = {
     home: 'Início',
+    projects: 'Projetos / Todos os projetos',
     library: 'Biblioteca / Todas as reuniões',
     settings: 'Sistema / Configurações',
     project: `Projetos / ${projects.find((p) => p.id === currentProjectId)?.name || ''}`,
@@ -112,6 +114,7 @@ const expandedProjects = new Set();
 
 function renderSidebar() {
   $('nav-home').classList.toggle('is-active', view === 'home');
+  $('nav-projects-all').classList.toggle('is-active', view === 'projects');
   $('nav-library').classList.toggle('is-active', view === 'library');
   $('nav-settings').classList.toggle('is-active', view === 'settings');
 
@@ -297,6 +300,212 @@ async function renderHome() {
   if (!meetings.length) rec.append(emptyNote('Nenhuma reunião ainda. Importe um vídeo para começar.'));
   for (const m of meetings.slice(0, 5)) rec.append(meetingTile(m, { showProject: true }));
 }
+
+// --- Projetos: o módulo -----------------------------------------------------------------
+
+/** Blocos ou tabela — a escolha fica salva entre sessões. */
+let projectsMode = localStorage.getItem('projectsMode') === 'table' ? 'table' : 'grid';
+let projectsSort = { key: 'name', dir: 1 };
+
+function setProjectsMode(mode) {
+  projectsMode = mode;
+  localStorage.setItem('projectsMode', mode);
+  renderProjects();
+}
+
+async function renderProjects() {
+  await refreshProjects();
+
+  const grid = $('projects-grid');
+  const wrap = $('projects-table-wrap');
+  const vazio = $('projects-empty');
+
+  $('vs-grid').setAttribute('aria-pressed', String(projectsMode === 'grid'));
+  $('vs-table').setAttribute('aria-pressed', String(projectsMode === 'table'));
+
+  const reunioes = projects.reduce((s, p) => s + p.meetings, 0);
+  const abertas = projects.reduce((s, p) => s + p.openTasks, 0);
+  $('projects-sub').textContent = projects.length
+    ? `${projects.length} projeto(s) · ${reunioes} reunião(ões) · ${abertas} tarefa(s) aberta(s)`
+    : 'nenhum projeto';
+
+  const temProjetos = projects.length > 0;
+  vazio.hidden = temProjetos;
+  grid.hidden = !temProjetos || projectsMode !== 'grid';
+  wrap.hidden = !temProjetos || projectsMode !== 'table';
+
+  if (!temProjetos) {
+    grid.replaceChildren();
+    $('projects-tbody').replaceChildren();
+    return;
+  }
+
+  if (projectsMode === 'grid') renderProjectsGrid();
+  else renderProjectsTable();
+}
+
+/** Botão pequeno de ação, usado no cartão e na linha da tabela. */
+function projectAction(label, title, onClick, extraClass = '') {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = `mini ${extraClass}`.trim();
+  b.textContent = label;
+  b.title = title;
+  b.setAttribute('aria-label', title);
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+  return b;
+}
+
+async function confirmDeleteProject(p) {
+  const aviso = `Excluir "${p.name}"?\n\nAs reuniões continuam na biblioteca, apenas ficam sem projeto. As ${p.openTasks} tarefa(s) do kanban serão apagadas.`;
+  if (!window.confirm(aviso)) return;
+  await window.api.deleteProject(p.id);
+  expandedProjects.delete(p.id);
+  await renderProjects();
+  renderSidebar();
+  toast(`Projeto <strong>${p.name}</strong> excluído.`);
+}
+
+function bold(texto) {
+  const b = document.createElement('b');
+  b.textContent = texto;
+  return b;
+}
+
+function renderProjectsGrid() {
+  const grid = $('projects-grid');
+  grid.replaceChildren();
+
+  for (const p of projects) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'proj-card';
+    card.addEventListener('click', () => openProject(p.id, 'overview'));
+
+    const head = document.createElement('div');
+    head.className = 'proj-card-head';
+    const glyph = document.createElement('span');
+    glyph.className = 'proj-card-glyph';
+    glyph.setAttribute('aria-hidden', 'true');
+    glyph.textContent = '◈';
+    const name = document.createElement('span');
+    name.className = 'proj-card-name';
+    name.textContent = p.name;
+    head.append(glyph, name);
+
+    const ctx = document.createElement('p');
+    ctx.className = 'proj-card-context';
+    ctx.textContent = p.context
+      || 'Sem contexto. O contexto orienta o tom dos documentos gerados pela IA.';
+
+    const foot = document.createElement('div');
+    foot.className = 'proj-card-foot';
+    const reun = document.createElement('span');
+    reun.append(bold(p.meetings), document.createTextNode(' reuniões'));
+    const tar = document.createElement('span');
+    tar.className = 'open';
+    tar.append(bold(p.openTasks), document.createTextNode(' abertas'));
+    const when = document.createElement('span');
+    when.className = 'when';
+    when.textContent = p.lastMeetingAt ? fmtDate(p.lastMeetingAt) : '—';
+    when.title = p.lastMeetingAt ? 'Última reunião' : 'Nenhuma reunião ainda';
+    foot.append(reun, tar, when);
+
+    const acts = document.createElement('div');
+    acts.className = 'proj-card-acts';
+    acts.append(
+      projectAction('editar', `Editar ${p.name}`, () => openProjectModal(p)),
+      projectAction('excluir', `Excluir ${p.name}`, () => confirmDeleteProject(p), 'danger'),
+    );
+
+    card.append(acts, head, ctx, foot);
+    grid.append(card);
+  }
+}
+
+function renderProjectsTable() {
+  const tbody = $('projects-tbody');
+  tbody.replaceChildren();
+
+  const { key, dir } = projectsSort;
+  const ordenados = [...projects].sort((a, b) => {
+    const va = a[key];
+    const vb = b[key];
+    if (typeof va === 'string') return va.localeCompare(vb) * dir;
+    return (va - vb) * dir;
+  });
+
+  for (const th of $('projects-table').querySelectorAll('th[data-sort]')) {
+    const ativo = th.dataset.sort === key;
+    th.toggleAttribute('data-active', ativo);
+    const antigo = th.querySelector('.caret');
+    if (antigo) antigo.remove();
+    if (!ativo) continue;
+    const seta = document.createElement('span');
+    seta.className = 'caret';
+    seta.textContent = dir === 1 ? '↑' : '↓';
+    th.append(seta);
+  }
+
+  for (const p of ordenados) {
+    const tr = document.createElement('tr');
+    tr.tabIndex = 0;
+    tr.addEventListener('click', () => openProject(p.id, 'overview'));
+    tr.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') openProject(p.id, 'overview');
+    });
+
+    const nome = document.createElement('td');
+    nome.textContent = p.name;
+
+    const reun = document.createElement('td');
+    reun.className = 'num';
+    reun.textContent = p.meetings;
+
+    const abertas = document.createElement('td');
+    abertas.className = 'num';
+    abertas.textContent = p.openTasks;
+
+    const quando = document.createElement('td');
+    quando.className = 'dim';
+    quando.textContent = p.lastMeetingAt ? fmtDate(p.lastMeetingAt) : '—';
+
+    const ctx = document.createElement('td');
+    ctx.className = 'ctx';
+    ctx.textContent = p.context || '—';
+    if (p.context) ctx.title = p.context;
+
+    const acts = document.createElement('td');
+    acts.className = 'acts-col';
+    const box = document.createElement('div');
+    box.className = 'row-acts';
+    box.append(
+      projectAction('abrir', `Abrir ${p.name}`, () => openProject(p.id, 'overview')),
+      projectAction('editar', `Editar ${p.name}`, () => openProjectModal(p)),
+      projectAction('excluir', `Excluir ${p.name}`, () => confirmDeleteProject(p), 'danger'),
+    );
+    acts.append(box);
+
+    tr.append(nome, reun, abertas, quando, ctx, acts);
+    tbody.append(tr);
+  }
+}
+
+$('vs-grid').addEventListener('click', () => setProjectsMode('grid'));
+$('vs-table').addEventListener('click', () => setProjectsMode('table'));
+$('projects-new').addEventListener('click', () => openProjectModal());
+$('projects-table').querySelectorAll('th[data-sort]').forEach((th) => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.sort;
+    projectsSort = key === projectsSort.key
+      ? { key, dir: projectsSort.dir * -1 }
+      : { key, dir: key === 'name' ? 1 : -1 };
+    renderProjectsTable();
+  });
+});
 
 // --- Projeto: visão geral -----------------------------------------------------------
 
@@ -1166,6 +1375,7 @@ window.api.on('doc:progress', ({ description }) => {
 // --- Navegação: ligações -----------------------------------------------------------------
 
 $('nav-home').addEventListener('click', () => setView('home'));
+$('nav-projects-all').addEventListener('click', () => setView('projects'));
 $('nav-library').addEventListener('click', () => setView('library'));
 $('nav-settings').addEventListener('click', () => setView('settings'));
 $('engine').addEventListener('click', () => setView('settings'));

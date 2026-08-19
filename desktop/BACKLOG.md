@@ -8,7 +8,7 @@ Status real do produto. 🟢 = pronto e verificado no app com dados reais,
 | PRJ-01 | Projetos | Criar projeto | Alta | 🟢 |
 | PRJ-02 | Projetos | Editar projeto | Alta | 🟢 |
 | PRJ-03 | Projetos | Excluir projeto | Alta | 🟢 (leva as tarefas junto; reuniões ficam sem projeto) |
-| PRJ-04 | Projetos | Listar projetos | Alta | 🟢 |
+| PRJ-04 | Projetos | Listar projetos | Alta | 🟢 (módulo próprio: blocos ou tabela ordenável, com CRUD na própria lista) |
 | PRJ-05 | Projetos | Dashboard individual do projeto | Alta | 🟢 |
 | PRJ-06 | Projetos | Associar reuniões ao projeto | Alta | 🟢 (na importação, na gravação e no painel da reunião) |
 | KAN-01 | Kanban | Kanban individual por projeto | Alta | 🟢 |

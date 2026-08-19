@@ -1370,6 +1370,21 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 .datatable .acts-col { width: 1%; white-space: nowrap; text-align: right; }
 .datatable .row-acts { display: flex; gap: 4px; justify-content: flex-end; }
 
+/* ===== Modal de exclusão ===== */
+
+.modal-sm { max-width: 420px; }
+
+.btn.danger-solid {
+  background: var(--red);
+  border: 1px solid var(--red);
+  color: #2a0a12;
+  box-shadow: 0 0 20px rgba(251, 113, 133, 0.2);
+}
+
+.btn.danger-solid:hover { filter: brightness(1.08); box-shadow: 0 0 28px rgba(251, 113, 133, 0.35); }
+
+#modal-danger .modal-sub { margin: 0 0 18px; line-height: 1.55; }
+
 /* ===== Rolagem ===== */
 
 * {

@@ -42,10 +42,6 @@
         </button>
       </nav>
 
-      <button class="engine" id="engine" type="button" data-ok="false" title="Estado do motor — abrir configurações">
-        <span class="dot" aria-hidden="true"></span>
-        <span id="engine-text">verificando…</span>
-      </button>
     </aside>
 
     <!-- ===== Área principal ===== -->
@@ -53,7 +49,6 @@
       <header class="topbar">
         <p class="crumb" id="crumb">Início</p>
         <div class="topbar-actions">
-          <button class="btn ghost" id="top-import" type="button">Importar vídeo</button>
           <button class="btn solid" id="top-record" type="button" hidden>● Iniciar reunião</button>
         </div>
       </header>
@@ -69,7 +64,7 @@
             <div class="hero-actions">
               <button class="btn solid" id="home-record" type="button">● Iniciar gravação</button>
               <button class="btn ghost" id="home-import" type="button">Importar vídeo</button>
-              <button class="btn ghost" id="home-new-project" type="button">Criar projeto</button>
+              <button class="btn ghost" id="home-import-text" type="button">Importar transcrição</button>
             </div>
           </div>
         </div>
@@ -367,9 +362,19 @@
         <div class="modal-actions">
           <span class="spacer"></span>
           <button class="btn ghost" id="mc-cancel" type="button">Cancelar</button>
-          <button class="btn solid" type="submit">Transcrever</button>
+          <button class="btn solid" id="mc-submit" type="submit">Transcrever</button>
         </div>
       </form>
+    </div>
+
+    <div class="modal modal-sm" id="modal-danger" hidden>
+      <h2 id="md-title">Excluir</h2>
+      <p class="modal-sub" id="md-message"></p>
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button class="btn ghost" id="md-cancel" type="button">Cancelar</button>
+        <button class="btn danger-solid" id="md-confirm" type="button">Excluir</button>
+      </div>
     </div>
 
     <!-- ===== Overlays: gravação e processamento ===== -->

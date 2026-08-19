@@ -25,6 +25,7 @@ let drawerTranscript = '';
 let editingTaskId = '';
 let editingProjectId = '';
 let pendingVideo = '';
+let pendingKind = 'video';   // 'video' ou 'transcript'
 let recTimer = null;
 let recStartedAt = 0;
 let jobProjectId = '';
@@ -270,8 +271,12 @@ function projectAction(label, title, onClick, extraClass = '') {
 }
 
 async function confirmDeleteProject(p) {
-  const aviso = `Excluir "${p.name}"?\n\nAs reuniões continuam na biblioteca, apenas ficam sem projeto. As ${p.openTasks} tarefa(s) do kanban serão apagadas.`;
-  if (!window.confirm(aviso)) return;
+  const ok = await confirmDanger({
+    title: `Excluir "${p.name}"?`,
+    message: `As reuniões continuam na biblioteca, apenas ficam sem projeto. ${p.openTasks} tarefa(s) do kanban serão apagadas.`,
+    confirmLabel: 'Excluir projeto',
+  });
+  if (!ok) return;
   await window.api.deleteProject(p.id);
   await renderProjects();
   renderSidebar();
@@ -733,13 +738,8 @@ $('lib-group').addEventListener('change', () => { libView.group = $('lib-group')
 
 async function checkEngine() {
   engines = await window.api.enginesStatus();
-  const isNative = engines.active === 'native';
-  const active = isNative ? engines.native : engines.docker;
+  const active = engines.active === 'native' ? engines.native : engines.docker;
   engineReady = Boolean(active.ok);
-  $('engine').dataset.ok = String(engineReady);
-  $('engine-text').textContent = engineReady
-    ? (isNative ? 'GPU · whisper.cpp' : `Docker ${engines.docker.version} · CPU`)
-    : 'motor indisponível';
 }
 
 function renderSettings() {
@@ -925,7 +925,12 @@ $('drawer-rename').addEventListener('click', () => {
 });
 
 $('drawer-delete').addEventListener('click', async () => {
-  if (!window.confirm('Excluir esta reunião? Os arquivos serão apagados do disco. Não dá para desfazer.')) return;
+  const ok = await confirmDanger({
+    title: 'Excluir esta reunião?',
+    message: 'A transcrição e os documentos gerados serão apagados do disco. Não dá para desfazer.',
+    confirmLabel: 'Excluir reunião',
+  });
+  if (!ok) return;
   await window.api.deleteMeeting(drawerMeetingId);
   closeDrawer();
   await refreshAll();
@@ -944,6 +949,39 @@ function openModal(id) {
   $('modal-scrim').hidden = false;
   $(id).hidden = false;
 }
+/**
+ * Confirmação de ação destrutiva.
+ *
+ * A caixa do sistema trava a janela, ignora o tema e não cabe o detalhe do que
+ * será apagado. Aqui a pergunta é do app: diz o que some e o que fica, e
+ * responde a Esc e Enter.
+ */
+let dangerResolve = null;
+
+function confirmDanger({ title, message, confirmLabel = 'Excluir' }) {
+  $('md-title').textContent = title;
+  $('md-message').textContent = message;
+  $('md-confirm').textContent = confirmLabel;
+  openModal('modal-danger');
+  $('md-confirm').focus();
+
+  return new Promise((resolve) => {
+    dangerResolve = resolve;
+  });
+}
+
+function closeDanger(resposta) {
+  if (!dangerResolve) return;
+  const resolve = dangerResolve;
+  dangerResolve = null;
+  $('modal-danger').hidden = true;
+  $('modal-scrim').hidden = true;
+  resolve(resposta);
+}
+
+$('md-confirm').addEventListener('click', () => closeDanger(true));
+$('md-cancel').addEventListener('click', () => closeDanger(false));
+
 function closeModals() {
   $('modal-scrim').hidden = true;
   for (const id of ['modal-project', 'modal-task', 'modal-confirm']) $(id).hidden = true;
@@ -951,6 +989,7 @@ function closeModals() {
 $('modal-scrim').addEventListener('click', closeModals);
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { closeModals(); closeDrawer(); }
+  if (e.key === 'Enter' && dangerResolve) closeDanger(true);
 });
 
 // Projeto: criar/editar.
@@ -979,7 +1018,12 @@ $('mp-form').addEventListener('submit', async (e) => {
 $('mp-delete').addEventListener('click', async () => {
   const p = projects.find((x) => x.id === editingProjectId);
   if (!p) return;
-  if (!window.confirm(`Excluir "${p.name}"?\n\nAs reuniões continuam na biblioteca, apenas ficam sem projeto. As tarefas do kanban serão apagadas.`)) return;
+  const ok = await confirmDanger({
+    title: `Excluir "${p.name}"?`,
+    message: 'As reuniões continuam na biblioteca, apenas ficam sem projeto. As tarefas do kanban serão apagadas.',
+    confirmLabel: 'Excluir projeto',
+  });
+  if (!ok) return;
   await window.api.deleteProject(editingProjectId);
   closeModals();
   await refreshProjects();
@@ -988,7 +1032,6 @@ $('mp-delete').addEventListener('click', async () => {
 
 $('mp-cancel').addEventListener('click', closeModals);
 $('nav-new-project').addEventListener('click', () => openProjectModal());
-$('home-new-project').addEventListener('click', () => openProjectModal());
 $('overview-edit').addEventListener('click', () => openProjectModal(projects.find((x) => x.id === currentProjectId)));
 
 // Tarefa: criar/editar.
@@ -1039,12 +1082,18 @@ $('mt-delete').addEventListener('click', async () => {
 $('mt-cancel').addEventListener('click', closeModals);
 
 // Importação: confirmar nome + projeto.
-function askImport(videoPath) {
-  if (!engineReady) { toast('O motor de transcrição não está disponível — veja as <strong>Configurações</strong>.'); return; }
-  pendingVideo = videoPath;
-  $('mc-file').textContent = videoPath.split(/[\\/]/).pop();
-  $('mc-name').value = videoPath.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+function askImport(filePath, kind = "video") {
+  // Transcrição pronta não passa pelo Whisper: motor parado não impede.
+  if (kind === 'video' && !engineReady) {
+    toast('O motor de transcrição não está disponível — veja as <strong>Configurações</strong>.');
+    return;
+  }
+  pendingVideo = filePath;
+  pendingKind = kind;
+  $('mc-file').textContent = filePath.split(/[\\/]/).pop();
+  $('mc-name').value = filePath.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
   $('mc-error').textContent = '';
+  $('mc-submit').textContent = kind === 'video' ? 'Transcrever' : 'Importar';
   const sel = $('mc-project');
   sel.replaceChildren(new Option('sem projeto', ''));
   for (const p of projects) sel.append(new Option(p.name, p.id));
@@ -1061,6 +1110,17 @@ $('mc-form').addEventListener('submit', async (e) => {
   if (/[<>:"/\\|?*]/.test(nome)) { $('mc-error').textContent = 'O nome não pode conter < > : " / \\ | ? *'; return; }
   const projectId = $('mc-project').value;
   closeModals();
+
+  if (pendingKind === 'transcript') {
+    startProcessing($('mc-file').textContent, projectId, ['export', 'extract']);
+    const r = await window.api.importTranscript({ filePath: pendingVideo, name: nome, projectId });
+    if (!r.ok) {
+      $('overlay-process').hidden = true;
+      toast(`Não deu para importar: ${r.message}`);
+    }
+    return;
+  }
+
   startProcessing($('mc-file').textContent, projectId);
   await window.api.startJob({ videoPath: pendingVideo, name: nome, projectId });
 });
@@ -1069,9 +1129,14 @@ $('mc-cancel').addEventListener('click', closeModals);
 
 async function pickAndImport() {
   const path = await window.api.pickVideo();
-  if (path) askImport(path);
+  if (path) askImport(path, 'video');
 }
-$('top-import').addEventListener('click', pickAndImport);
+
+async function pickAndImportTranscript() {
+  const path = await window.api.pickTranscript();
+  if (path) askImport(path, 'transcript');
+}
+$('home-import-text').addEventListener('click', pickAndImportTranscript);
 $('home-import').addEventListener('click', pickAndImport);
 
 // Soltar um vídeo em qualquer lugar da janela também importa.
@@ -1246,12 +1311,22 @@ $('record-stop').addEventListener('click', async () => {
 const STAGE_RANGE = { audio: [0, 0.1], transcription: [0.1, 0.72], export: [0.72, 0.78], extract: [0.78, 1] };
 const STAGE_LABELS = { audio: 'Extraindo áudio', transcription: 'Transcrevendo', export: 'Gravando arquivos', extract: 'Extraindo tarefas' };
 
-function startProcessing(label, projectId) {
+/**
+ * Abre a tela de processamento.
+ *
+ * `etapas` limita o que a lista mostra: uma transcrição importada não passa
+ * por áudio nem por Whisper, e exibir esses passos apagados sugeriria que
+ * algo ficou pelo caminho.
+ */
+function startProcessing(label, projectId, etapas = null) {
   jobProjectId = projectId || '';
   $('process-file').textContent = label;
   $('process-stage').textContent = 'Iniciando';
   $('process-pct').textContent = '0%';
-  for (const li of $('pipeline').children) li.className = '';
+  for (const li of $('pipeline').children) {
+    li.className = '';
+    li.hidden = Boolean(etapas) && !etapas.includes(li.dataset.step);
+  }
   $('overlay-process').hidden = false;
   if (!processNet) processNet = window.createNeural($('process-net'));
   window.dispatchEvent(new Event('resize'));
@@ -1312,7 +1387,6 @@ $('nav-home').addEventListener('click', () => setView('home'));
 $('nav-projects-all').addEventListener('click', () => setView('projects'));
 $('nav-library').addEventListener('click', () => setView('library'));
 $('nav-settings').addEventListener('click', () => setView('settings'));
-$('engine').addEventListener('click', () => setView('settings'));
 $('project-tabs').addEventListener('click', (e) => {
   const b = e.target.closest('.tab');
   if (b) setTab(b.dataset.tab);

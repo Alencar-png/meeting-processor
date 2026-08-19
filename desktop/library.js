@@ -259,12 +259,21 @@ function renameMeeting(dir, id, newName) {
 }
 
 /** Exclui a reunião inteira, ou apenas os arquivos indicados. */
-function deleteMeeting(dir, id, files = null) {
+/**
+ * Exclusão de reunião.
+ *
+ * `trash` recebe uma função que manda a pasta para a Lixeira do sistema (no
+ * app, `shell.trashItem` do Electron). Transcrição é trabalho que não se
+ * refaz sem o vídeo original: apagar direto do disco não deixa volta, e um
+ * clique errado custaria a reunião inteira.
+ */
+function deleteMeeting(dir, id, files = null, trash = null) {
   const meeting = getMeeting(dir, id);
   if (!meeting) return { ok: false, message: 'Transcrição não encontrada.' };
 
   if (!files && !meeting.legacy) {
     try {
+      if (trash) return trash(meeting);
       fs.rmSync(meeting.dir, { recursive: true, force: true });
       groups.forgetMeeting(dir, meeting.id);
       return { ok: true, deleted: meeting.files.length };

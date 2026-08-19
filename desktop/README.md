@@ -84,6 +84,12 @@ importação e o arquivo temporário é apagado no fim.
 Solte um vídeo em qualquer lugar da janela, ou use **Importar vídeo**. Você
 confirma o nome e o projeto antes de começar.
 
+**Importar transcrição** aceita texto já pronto (`.txt`, `.md`) e legendas
+(`.srt`, `.vtt`) — útil para reuniões que já foram transcritas pelo Teams ou
+pelo Zoom. A legenda vira fala com horário, e a reunião entra na biblioteca
+como qualquer outra: com projeto escolhido, ainda passa pela extração de
+tarefas.
+
 ### Depois da transcrição
 
 O Claude lê a transcrição e devolve as ações combinadas em JSON — título,
@@ -120,6 +126,7 @@ desktop/
 ├── engines.js           # os dois motores: nativo (GPU) e container (CPU)
 ├── docker-args.js       # montagem do comando do container
 ├── claude-jobs.js       # prompts e execução do `claude -p`
+├── transcript-import.js # texto e legenda viram reunião (.txt .md .srt .vtt)
 ├── library.js           # a pasta de saída lida como biblioteca (CRUD)
 ├── groups.js            # projetos e seus contextos (groups.json)
 ├── tasks.js             # tarefas do kanban (tasks.json)
@@ -139,6 +146,9 @@ desktop/
 ```
 
 ## Solução de problemas
+
+> Excluir uma reunião manda a pasta para a **Lixeira** do sistema, não apaga
+> do disco: transcrição não se refaz sem o vídeo original.
 
 | Sintoma | O que fazer |
 |---------|-------------|

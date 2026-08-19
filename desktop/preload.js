@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // --- Pipeline: importação e gravação ---
   startJob: (payload) => ipcRenderer.invoke('job:start', payload),
+  importTranscript: (payload) => ipcRenderer.invoke('transcript:import', payload),
   processRecording: (payload) => ipcRenderer.invoke('job:recording', payload),
   cancelJob: () => ipcRenderer.invoke('job:cancel'),
 
@@ -73,6 +74,7 @@ contextBridge.exposeInMainWorld('api', {
   // --- Sistema ---
   pickOutputDir: () => ipcRenderer.invoke('dialog:pickOutputDir'),
   pickVideo: () => ipcRenderer.invoke('dialog:pickVideo'),
+  pickTranscript: () => ipcRenderer.invoke('dialog:pickTranscript'),
   showInFolder: (filePath) => ipcRenderer.invoke('shell:showInFolder', filePath),
   openPath: (filePath) => ipcRenderer.invoke('shell:openPath', filePath),
 

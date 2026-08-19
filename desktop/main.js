@@ -37,6 +37,7 @@ const library = require('./library');
 const groups = require('./groups');
 const tasks = require('./tasks');
 const workspace = require('./workspace');
+const transcriptImport = require('./transcript-import');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
@@ -347,6 +348,50 @@ function startJob(payload) {
  * que não veio é um kanban vazio, não uma reunião perdida.
  */
 /**
+ * Importa uma transcrição já pronta (texto ou legenda).
+ *
+ * Não há áudio para extrair nem nada para transcrever: o arquivo vira reunião
+ * direto e, havendo projeto, segue para a extração de tarefas como qualquer
+ * outra. Os eventos são os mesmos do pipeline para a janela não precisar de um
+ * segundo caminho de progresso.
+ */
+async function importTranscriptJob({ filePath, name, projectId }) {
+  if (currentJob || currentExtraction) {
+    return { ok: false, message: 'Espere o processamento em andamento terminar.' };
+  }
+
+  const settings = loadSettings();
+  const outputDir = settings.outputDir;
+  const resultado = transcriptImport.importTranscript({
+    filePath,
+    outputDir,
+    name,
+    language: settings.language,
+  });
+  if (!resultado.ok) return resultado;
+
+  if (projectId) groups.assignMeeting(outputDir, resultado.id, projectId);
+
+  send('job:event', {
+    event: 'stage',
+    key: 'export',
+    progress: 100,
+    detail: `${resultado.segments} fala(s) importada(s)`,
+  });
+
+  const evento = {
+    event: 'done',
+    files: [resultado.transcriptPath],
+    segments: resultado.segments,
+    duration: resultado.duration,
+    elapsed: 0,
+    meetingId: resultado.id,
+  };
+  await finishJob(evento, outputDir, projectId);
+  return { ok: true, meetingId: resultado.id };
+}
+
+/**
  * Fecha o ciclo da reunião: com projeto, as ações viram cards antes do aviso de
  * pronto; sem projeto, não há onde pendurar tarefa e o aviso sai na hora.
  */
@@ -643,9 +688,13 @@ ipcMain.handle('meetings:rename', (_e, { id, name }) => {
   }
   return result;
 });
-ipcMain.handle('meetings:delete', (_e, { id, files }) => {
+ipcMain.handle('meetings:delete', async (_e, { id, files }) => {
   const dir = outDir();
-  const result = library.deleteMeeting(dir, id, files);
+  // Vai para a Lixeira, não para o vazio: um clique errado dá para desfazer.
+  const result = await library.deleteMeeting(dir, id, files, async (meeting) => {
+    await shell.trashItem(meeting.dir);
+    return { ok: true, deleted: meeting.files.length, trashed: true };
+  });
   if (result.ok) {
     groups.forgetMeeting(dir, id);
     tasks.forgetMeeting(dir, id);
@@ -666,6 +715,7 @@ ipcMain.handle('tasks:delete', (_e, id) => tasks.deleteTask(outDir(), id));
 ipcMain.handle('job:start', (_e, payload) => startJob(payload));
 ipcMain.handle('job:recording', (_e, payload) => startRecordingJob(payload));
 ipcMain.handle('job:cancel', () => cancelJob());
+ipcMain.handle('transcript:import', (_e, payload) => importTranscriptJob(payload));
 
 // Documentos: o front manda o id da reunião; aqui viram caminho e contexto.
 ipcMain.handle('doc:generate', (_e, { kind, meetingId }) => {
@@ -722,6 +772,16 @@ ipcMain.handle('dialog:pickOutputDir', async () => {
   });
   if (result.canceled || !result.filePaths[0]) return null;
   return saveSettings({ outputDir: result.filePaths[0] }).outputDir;
+});
+
+ipcMain.handle('dialog:pickTranscript', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Escolher transcrição',
+    properties: ['openFile'],
+    filters: [{ name: 'Transcrição e legenda', extensions: transcriptImport.EXTENSIONS }],
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  return result.filePaths[0];
 });
 
 ipcMain.handle('dialog:pickVideo', async () => {

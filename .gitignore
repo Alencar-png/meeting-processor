@@ -2,15 +2,14 @@
 .env
 .claude/settings.local.json
 
-# Diretórios runtime
-.tmp/
-.processed/
+# Binário e modelos do whisper.cpp: grandes, específicos da máquina, e
+# baixados/compilados na instalação.
 .models/
 .whisper-cpp/
 
-# Conteúdo do usuário (vault não é versionado por padrão)
-# Comente a linha abaixo se quiser versionar templates e estrutura
-vault/
+# Áudio temporário da transcrição
+.tmp/
+*.wav
 
 # App desktop
 node_modules/
@@ -27,16 +26,15 @@ __pycache__/
 venv/
 env/
 
-# Áudio temporário
-*.wav
-
-# Estado local (fila de jobs e índice de reuniões)
+# Estado local (banco do workspace, log do motor)
 *.db
 *.db-wal
 *.db-shm
-
-# Logs
 *.log
+
+# Sobras das versões anteriores, que gravavam num vault do Obsidian.
+vault/
+.processed/
 
 # IDEs
 .vscode/

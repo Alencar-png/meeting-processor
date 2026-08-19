@@ -1,10 +1,10 @@
-"""Ponto de entrada do Meeting Processor.
+"""Ponto de entrada do motor de transcrição.
 
 Uso:
-    python -m meeting_processor watch              Monitora pasta OBS (padrão)
-    python -m meeting_processor process <file>     Pipeline completo no vault
-    python -m meeting_processor transcribe <file>  Só transcreve numa pasta
-    python -m meeting_processor reindex            Reindexa o vault no SQLite
+    python -m meeting_processor transcribe <arquivo> [--output-dir ...]
+
+É o que o app desktop chama para cada gravação. Também serve de linha de
+comando avulsa, para transcrever um arquivo sem abrir o app.
 """
 
 import argparse
@@ -53,28 +53,9 @@ def setup_logging(level: str, stream: TextIO | None = None) -> None:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Meeting Processor - Transcreve e resume reunioes gravadas",
+        description="Transcreve gravacoes de reuniao com o Whisper",
     )
     subparsers = parser.add_subparsers(dest="command")
-
-    subparsers.add_parser("watch", help="Monitora pasta do OBS")
-    subparsers.add_parser(
-        "reindex", help="Reindexa as reunioes existentes do vault no banco (SQLite)"
-    )
-
-    process_parser = subparsers.add_parser(
-        "process", help="Processa um video no vault (transcricao + resumo)"
-    )
-    process_parser.add_argument("file", type=str, help="Caminho do arquivo de video")
-    process_parser.add_argument(
-        "--only-transcribe",
-        action="store_true",
-        help="So transcreve (sem resumo, nota, kanban ou wiki)",
-    )
-    process_parser.add_argument("--no-summary", action="store_true", help="Nao gera resumo (LLM)")
-    process_parser.add_argument("--no-note", action="store_true", help="Nao gera nota de resumo")
-    process_parser.add_argument("--no-kanban", action="store_true", help="Nao cria Kanban")
-    process_parser.add_argument("--no-wiki", action="store_true", help="Nao integra com a wiki")
 
     tr = subparsers.add_parser(
         "transcribe",
@@ -225,84 +206,17 @@ def _run_transcribe(args: argparse.Namespace, config: Settings) -> int:
 
 
 def main() -> None:
-    args = _build_parser().parse_args()
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    if args.command != "transcribe":
+        parser.print_help()
+        sys.exit(2)
+
     config = load_config()
-
     # No modo --json o stdout é reservado aos eventos; o log vai para stderr.
-    json_mode = getattr(args, "json", False)
-    setup_logging(config.log_level, stream=sys.stderr if json_mode else sys.stdout)
-
-    logger = logging.getLogger(__name__)
-
-    if args.command == "transcribe":
-        sys.exit(_run_transcribe(args, config))
-
-    # Comandos que usam o banco de estado (fila, índice de reuniões, tags).
-    from .db import init_db
-
-    init_db(config.project_root)
-
-    if args.command == "process":
-        video_path = Path(args.file)
-        if not video_path.exists():
-            logger.error("Arquivo nao encontrado: %s", video_path)
-            sys.exit(1)
-
-        # Flags de etapa sobrescrevem a config só nesta execução.
-        if args.only_transcribe or args.no_summary:
-            config.enable_summary = False
-        if args.no_note:
-            config.enable_note = False
-        if args.no_kanban:
-            config.enable_kanban = False
-        if args.no_wiki:
-            config.enable_wiki = False
-
-        from .pipeline import MeetingPipeline
-
-        pipeline = MeetingPipeline(config)
-        try:
-            result = pipeline.process(video_path)
-            print("\nProcessamento concluido!")
-            print(f"  Transcricao: {result.raw_path}")
-            if result.note_path:
-                print(f"  Nota: {result.note_path}")
-            if result.summary is not None:
-                print(f"  Tarefas: {len(result.summary.action_items)}")
-            print(f"  Tempo: {result.processing_time:.1f}s")
-        except Exception:
-            logger.exception("Erro fatal ao processar arquivo")
-            sys.exit(1)
-
-    elif args.command == "reindex":
-        from .db import MeetingsRepo
-        from .utils import parse_timestamp
-        from .vault_index import list_meetings
-
-        repo = MeetingsRepo(config.project_root)
-        meetings = list_meetings(config.vault_path)
-        for m in meetings:
-            duration = parse_timestamp(m["duration"]) if m["duration"] else 0.0
-            participants = m["participants"] or ""
-            p_count = len([p for p in participants.split(",") if p.strip()])
-            repo.upsert(
-                m["id"],
-                title=m["title"],
-                created_at=m["created"] or None,
-                duration_seconds=duration,
-                source_file=m["source_file"] or None,
-                provider=config.llm_provider,
-                participants_count=p_count,
-                task_count=m["task_count"],
-            )
-        print(f"Reindexado: {len(meetings)} reuniao(oes) no banco.")
-
-    else:
-        # Padrão: modo watch
-        from .watcher import start_watching
-
-        logger.info("Meeting Processor iniciado em modo monitoramento.")
-        start_watching(config)
+    setup_logging(config.log_level, stream=sys.stderr if args.json else sys.stdout)
+    sys.exit(_run_transcribe(args, config))
 
 
 if __name__ == "__main__":

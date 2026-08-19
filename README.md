@@ -1,124 +1,81 @@
-# Meeting Processor
+# Synapse
 
-> Transforma gravações de reuniões em **transcrição**, **resumo**, **tarefas**
-> e **Kanban** — rodando **100% na sua máquina** (Windows, macOS ou Linux).
+> Grave a reunião — ou solte o vídeo na janela — e receba **transcrição**,
+> **tarefas no Kanban** e **documentos**, organizados por projeto.
+> Roda **na sua máquina**: nada de áudio sai dela.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![Node 20+](https://img.shields.io/badge/node-20%2B-green.svg)](https://nodejs.org/)
 [![License MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ---
 
 ## O que ele faz
 
-1. Você grava a reunião (OBS ou qualquer vídeo).
-2. Ele **extrai o áudio** (ffmpeg) e **transcreve** (Whisper).
-3. Opcionalmente **resume** com uma LLM (Claude API ou Ollama local) e gera
-   nota, lista de tarefas e quadro Kanban.
-4. O resultado são arquivos Markdown em `vault/` — leia com o Obsidian ou
-   qualquer editor de texto.
+1. Você grava pela janela do app, ou solta um vídeo/áudio nela.
+2. O **ffmpeg** extrai o áudio e o **Whisper** transcreve — local, na GPU.
+3. O app lê a transcrição e extrai as **ações combinadas**, que entram como
+   cards no Kanban do projeto.
+4. Resumo e tarefas também saem em PDF, na pasta da reunião.
 
-Você escolhe **quais etapas rodar** — pode usar só a transcrição, por exemplo.
+O centro é o **projeto**: cada um tem seu Kanban, suas reuniões, seus
+documentos e um texto de contexto que orienta o tom do que é gerado.
 
 ---
 
-## Instalação — passo a passo
+## Abrir e rodar
 
-Funciona igual nos três sistemas. Onde o comando muda, há uma linha para cada SO.
+### Passo 1 — Requisitos
 
-### Passo 1 — Instale o Python 3.11+
+| O quê | Para quê | Como instalar |
+|-------|----------|---------------|
+| **Node.js 20+** | abrir o app | `winget install OpenJS.NodeJS.LTS` |
+| **Python 3.11+** | motor de transcrição | <https://www.python.org/downloads/> (marque *Add to PATH*) |
+| **ffmpeg** | extrair o áudio | `winget install Gyan.FFmpeg` · `brew install ffmpeg` · `apt install ffmpeg` |
+| **Claude Code** | tarefas e documentos | <https://claude.com/claude-code> |
 
-Confira se já tem:
-
-```bash
-python --version      # Windows
-python3 --version     # macOS / Linux
-```
-
-Se não tiver, baixe em <https://www.python.org/downloads/> (no Windows, marque
-**"Add Python to PATH"** durante a instalação).
-
-### Passo 2 — Instale o ffmpeg
-
-| Sistema | Comando |
-|---------|---------|
-| Windows | `winget install Gyan.FFmpeg` |
-| macOS   | `brew install ffmpeg` |
-| Linux   | `sudo apt install ffmpeg` |
-
-Confira: `ffmpeg -version`
-
-### Passo 3 — Baixe o projeto e instale as dependências
+### Passo 2 — Instale as dependências do Python
 
 ```bash
 git clone https://github.com/Alencar-png/meeting-processor.git
 cd meeting-processor
-```
-
-Crie o ambiente virtual e instale:
-
-**Windows (PowerShell):**
-```powershell
 python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
 ```
 
-**macOS / Linux:**
+```powershell
+.venv\Scripts\Activate.ps1      # Windows
+```
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+source .venv/bin/activate       # macOS / Linux
 ```
 
-> Pronto para transcrever. O Whisper roda direto via `pip` (baixa o modelo
-> sozinho na primeira vez). Para resumos com IA, faça o passo 4.
-
-### Passo 4 *(opcional)* — Ative o resumo com IA
-
-Primeiro copie o `.env.example` para `.env`
-(`copy .env.example .env` no Windows, `cp .env.example .env` no macOS/Linux).
-Depois escolha **um** provedor e preencha a chave no `.env`:
-
-| Provedor | `MEETING_LLM_PROVIDER` | Chave no `.env` | Onde obter |
-|----------|------------------------|-----------------|------------|
-| **Claude** | `anthropic` | `ANTHROPIC_API_KEY` | <https://console.anthropic.com/> |
-| **OpenAI** | `openai` | `OPENAI_API_KEY` | <https://platform.openai.com/> |
-| **Gemini** | `gemini` | `GEMINI_API_KEY` | <https://aistudio.google.com/apikey> |
-| **Ollama (local, grátis)** | `local` | — | <https://ollama.com/download> |
-| **Sem IA (só transcrição)** | `none` | — | não precisa de nada |
-
-Exemplo (OpenAI):
-```dotenv
-MEETING_LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-# MEETING_OPENAI_MODEL=gpt-4o
+```bash
+pip install -e .
 ```
 
-Para **Ollama**, instale e baixe um modelo (`ollama pull qwen2.5:14b`), depois
-use `MEETING_LLM_PROVIDER=local`.
+Isso basta para o caminho rápido (whisper.cpp). Se preferir a transcrição em
+Python puro, que baixa o modelo sozinho mas é bem mais lenta:
+`pip install -e ".[transcription]"`.
 
-> Sem o passo 4, o sistema funciona em **modo só transcrição**.
+### Passo 3 — Coloque o whisper.cpp e um modelo
 
-**Qualquer outro modelo do mercado** — o provedor `openai` aceita qualquer
-serviço compatível com a API da OpenAI: basta trocar `MEETING_OPENAI_BASE_URL`.
+O motor rápido precisa de dois arquivos, que não vão no repositório por serem
+binários grandes:
 
-| Serviço | Base URL | Exemplo de modelo |
-|---------|----------|-------------------|
-| OpenRouter | `https://openrouter.ai/api/v1` | `openai/gpt-4o`, `anthropic/claude-3.5-sonnet` |
-| Groq | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
-| DeepSeek | `https://api.deepseek.com/v1` | `deepseek-chat` |
-| xAI (Grok) | `https://api.x.ai/v1` | `grok-2-latest` |
+- `whisper-cli` (ou `whisper-cli.exe`) em **`.whisper-cpp/`**
+- um modelo GGML `.bin` em **`.models/`** — `ggml-large-v3-turbo.bin` é um bom
+  padrão ([modelos disponíveis](https://huggingface.co/ggerganov/whisper.cpp))
 
----
+Como compilar o whisper.cpp com Vulkan está em
+[`desktop/README.md`](desktop/README.md). Sem esses arquivos o app ainda roda
+pelo motor Docker, que dispensa GPU.
 
-## Como usar
+### Passo 4 — Abra
 
-### App desktop — solte o vídeo e pronto
-
-Clique duas vezes em **`Meeting Processor (sem console).vbs`** na raiz do
-projeto. Na primeira vez ele instala as dependências do app; depois abre
-direto, sem janela de console. O **`Meeting Processor.bat`** faz o mesmo
-mostrando as mensagens, útil quando algo dá errado.
+Clique duas vezes em **`Meeting Processor (sem console).vbs`**. Na primeira vez
+ele instala as dependências do app; depois abre direto. O
+**`Meeting Processor.bat`** faz o mesmo mostrando as mensagens — use quando algo
+der errado.
 
 Pela linha de comando:
 
@@ -126,119 +83,41 @@ Pela linha de comando:
 cd desktop && npm install && npm start
 ```
 
-Arraste um vídeo para a janela: ele transcreve e grava `.md` e `.txt` na pasta
-que você escolher. Dois motores, alternáveis na própria janela:
+---
 
-- **GPU** (padrão) — whisper.cpp com Vulkan; ~11x mais rápido que tempo real
-  numa Radeon RX 9060 XT. Uma reunião de 1 h sai em ~5 min.
-- **Docker** — container CPU-only, para quando não há GPU disponível.
+## Os dois motores
 
-Detalhes e como compilar o whisper.cpp com Vulkan em
-[`desktop/README.md`](desktop/README.md).
+Alterne em **Configurações → Motor ativo**.
 
-### Linha de comando
+| Motor | Onde roda | Velocidade |
+|-------|-----------|------------|
+| **GPU** (padrão) | Python do host + whisper.cpp com Vulkan | ~11x tempo real |
+| **Docker** | container CPU-only | ~2x tempo real |
 
-```bash
-# Processa um arquivo já gravado
-python -m meeting_processor process reuniao.mkv
+Medido no mesmo áudio de 5 min com `large-v3-turbo` numa Radeon RX 9060 XT:
+**27 s na GPU** contra **153 s na CPU** com 16 threads. No Windows o Docker
+Desktop **não** expõe GPU AMD, então container e GPU são exclusivos.
 
-# Apenas transcrever (sem resumo/nota/kanban/wiki)
-python -m meeting_processor process reuniao.mkv --only-transcribe
-
-# Desligar etapas específicas
-python -m meeting_processor process reuniao.mkv --no-kanban --no-wiki
-
-# Só transcrever, gravando numa pasta qualquer (fora do vault).
-# Cria ./saida/<nome>/ com a transcrição e o meeting.json (metadados).
-python -m meeting_processor transcribe reuniao.mkv --output-dir ./saida --formats md,txt
-python -m meeting_processor transcribe reuniao.mkv --output-dir ./saida --name "Reuniao com o cliente"
-
-# Monitorar a pasta do OBS continuamente
-python -m meeting_processor watch
-
-# Reindexar no SQLite as reuniões já existentes no vault
-python -m meeting_processor reindex
-```
-
-### Atalhos prontos
-
-| Sistema | Monitorar |
-|---------|-----------|
-| Windows | `start_watcher.bat` (ou `start_watcher_silent.vbs`, sem janela) |
-| macOS/Linux | `./start_watcher.sh` |
-
-*(no macOS/Linux, rode uma vez `chmod +x start_watcher.sh`)*
-
-### Acompanhar o processamento
-
-O progresso vai para o console e para `meeting_processor.log`. O estado de
-cada job também fica na tabela `jobs` do SQLite (`meeting_processor.db`):
+Para o motor Docker, construa a imagem uma vez:
 
 ```bash
-sqlite3 meeting_processor.db \
-  "SELECT file, status, stage, progress, detail FROM jobs ORDER BY id DESC LIMIT 10;"
+docker build -t meeting-processor:latest .
 ```
 
 ---
 
-## Onde fica o resultado
+## Transcrever pelo terminal
 
-Cada reunião vira uma pasta em `vault/wiki/reunioes/<data hora - nome>/` com:
+O app chama exatamente este comando. Ele também serve avulso:
 
-- `Transcricao - *.md` — transcrição com timestamps (sempre);
-- `Resumo - *.md` — resumo executivo + por blocos (se o resumo estiver ligado);
-- `Tarefas - *.md` — quadro Kanban (se ligado);
-- nota central que liga tudo no grafo do Obsidian.
+```bash
+# Cria ./saida/<nome>/ com a transcrição (.md e .txt) e o meeting.json
+python -m meeting_processor transcribe reuniao.mkv --output-dir ./saida
+python -m meeting_processor transcribe reuniao.mkv --output-dir ./saida --name "Call com o cliente"
+```
 
-Abra a pasta `vault/` como **vault do Obsidian** ou leia os arquivos com
-qualquer editor de Markdown.
-
----
-
-## Escolher o que rodar
-
-Áudio e transcrição **sempre** rodam. As demais são opcionais e podem ser
-ligadas/desligadas pelo `config.yaml` ou por variável de ambiente:
-
-| Etapa | config.yaml | Variável de ambiente | Depende de |
-|-------|-------------|----------------------|------------|
-| Resumo (LLM) | `enable_summary` | `MEETING_ENABLE_SUMMARY` | — |
-| Nota Obsidian | `enable_note` | `MEETING_ENABLE_NOTE` | Resumo |
-| Kanban | `enable_kanban` | `MEETING_ENABLE_KANBAN` | Resumo |
-| Wiki | `enable_wiki` | `MEETING_ENABLE_WIKI` | Resumo |
-
-Desligar o **Resumo** equivale ao modo "só transcrição".
-
----
-
-## Acelerar com GPU (opcional)
-
-O backend padrão (`openai-whisper`) é simples e funciona em qualquer máquina,
-mas é lento sem GPU. Para máxima velocidade, use o **whisper.cpp**:
-
-1. Coloque o `whisper-cli` em `.whisper-cpp/` (ou deixe no PATH). Os binários
-   oficiais em <https://github.com/ggml-org/whisper.cpp/releases> cobrem CPU e
-   NVIDIA; para **GPU AMD ou Intel**, compile com Vulkan — passo a passo em
-   [`desktop/README.md`](desktop/README.md).
-2. Baixe um modelo GGML em
-   <https://huggingface.co/ggerganov/whisper.cpp/tree/main> para `.models/`.
-   `ggml-large-v3-turbo.bin` é o melhor equilíbrio.
-3. No `config.yaml`: `whisper_backend: "cpp"` (ou deixe `"auto"`, que usa o
-   whisper.cpp automaticamente quando ele está presente).
-
-O log diz qual dispositivo está em uso (`whisper.cpp usando GPU: …`). Sem essa
-linha, a transcrição está na CPU.
-
-Referência medida numa Radeon RX 9060 XT, `large-v3-turbo`, áudio de 5 min:
-
-| Execução | Tempo |
-|----------|-------|
-| GPU (Vulkan) | 27 s |
-| CPU, 16 threads | 153 s |
-| CPU, 4 threads (padrão do whisper.cpp) | ~10 min |
-
-Por padrão o whisper.cpp usa só 4 threads; o projeto agora passa todos os
-núcleos (ajustável em `whisper_threads` no `config.yaml`).
+Padrões em [`config.yaml`](config.yaml); qualquer um deles aceita override por
+variável de ambiente (veja [`.env.example`](.env.example)).
 
 ---
 
@@ -246,50 +125,44 @@ núcleos (ajustável em `whisper_threads` no `config.yaml`).
 
 | Sintoma | O que fazer |
 |---------|-------------|
-| `ffmpeg não encontrado no PATH` | Refaça o **Passo 2** e reabra o terminal |
-| Transcrição muito lenta | Use um modelo menor (`whisper_model: "base"`) ou whisper.cpp com GPU |
-| `Chave da API Anthropic inválida` | Confira `ANTHROPIC_API_KEY` no `.env` |
-| `Não foi possível conectar ao Ollama` | Inicie o Ollama (`ollama serve`) |
-| `Ollama respondeu 404` | Baixe o modelo: `ollama pull qwen2.5:14b` |
-| Nenhuma reunião é detectada | Confira `watch_dir` no `config.yaml` e se há vídeos na pasta |
-
-Logs detalhados ficam em `meeting_processor.log`.
+| `ffmpeg não encontrado no PATH` | Instale o ffmpeg e reabra o terminal |
+| `Motor nativo indisponível` | Falta o `whisper-cli` em `.whisper-cpp/` ou o `.bin` em `.models/` |
+| Transcrição lenta | Confira se a linha "GPU: ..." aparece no progresso; sem ela está na CPU |
+| Kanban vazio depois da reunião | O aviso na tela diz o motivo; o log completo está em `meeting_processor.log` |
+| `não foi possível executar o Claude Code` | Instale o Claude Code, ou aponte `CLAUDE_BIN` para o binário |
 
 ---
 
 ## Para desenvolvedores
 
 ```bash
-python -m pytest -q          # roda os testes (sem rede)
+python -m pytest -q                    # motor de transcrição
+cd desktop && npm test                 # app
 ```
 
-Estrutura principal:
-
 ```
-meeting_processor/
-├── __main__.py        # CLI (watch / process / transcribe / reindex)
-├── config.py          # configuração (YAML + .env)
-├── audio.py           # extração de áudio (ffmpeg)
-├── transcriber.py     # Whisper (openai-whisper / whisper.cpp)
-├── summarizer.py      # resumo (Claude / OpenAI / Gemini / Ollama)
-├── note_generator.py  # notas Markdown para Obsidian
-├── kanban.py          # quadros Kanban
-├── pipeline.py        # orquestra as etapas escolhidas
-├── watcher.py         # monitora a pasta do OBS
-├── progress.py        # progresso dos jobs (log + fila no SQLite)
-├── events.py          # eventos JSONL consumidos pelo app desktop
-├── media_info.py      # data da gravação e duração (ffprobe)
-├── transcript_export.py  # grava .md/.txt + meeting.json na pasta da reunião
-├── db.py              # estado estruturado (SQLite)
-├── vault_index.py     # leitura das reuniões já gravadas no vault
-└── utils.py           # helpers compartilhados
+meeting_processor/         # motor de transcrição (Python)
+├── __main__.py            # CLI: transcribe
+├── config.py              # configuração (YAML + .env)
+├── audio.py               # extração de áudio (ffmpeg)
+├── transcriber.py         # Whisper (whisper.cpp / openai-whisper)
+├── media_info.py          # data da gravação e duração (ffprobe)
+├── transcript_export.py   # grava .md/.txt + meeting.json na pasta da reunião
+├── events.py              # eventos JSONL consumidos pelo app
+├── models.py              # Transcript e seus segmentos
+└── utils.py               # helpers compartilhados
 
-desktop/               # app Electron (drag-and-drop → container → arquivos)
-Dockerfile             # imagem de transcrição (whisper.cpp + ffmpeg, CPU)
+desktop/                   # app Electron (Synapse) — veja desktop/README.md
+├── main.js                # processo principal: jobs, extração, documentos
+├── library.js             # reuniões na pasta de saída
+├── projects.js tasks.js   # projetos e Kanban (SQLite)
+├── claude-jobs.js         # chamadas ao Claude Code
+├── unicode-path.js        # caminhos com acento nas duas formas do Unicode
+├── prompts/               # prompts de extração e documentos, fora do código
+└── renderer/              # interface
+
+Dockerfile                 # imagem do motor CPU (whisper.cpp + ffmpeg)
 ```
-
-Documentos extras: [`docs/obsidian.md`](docs/obsidian.md),
-[`docs/llm-local.md`](docs/llm-local.md).
 
 ---
 

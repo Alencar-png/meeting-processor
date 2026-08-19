@@ -1,120 +1,29 @@
-# Meeting Processor - Configuração
-# ================================
+# Synapse - configuração do motor de transcrição
+# ==============================================
+#
+# O app desktop define tudo por variáveis de ambiente (é ele quem sabe o
+# binário e o modelo escolhidos na interface). Este arquivo serve a quem
+# chama `python -m meeting_processor transcribe` direto no terminal.
 
-# Caminhos
-# watch_dir: pasta onde o OBS salva as gravações.
-#   - Deixe em branco para detectar automaticamente ~/Videos/OBS (qualquer SO).
-#   - Também pode ser definido pela env MEETING_WATCH_DIR.
-#   - Aceita "~" para a home. Ex.: "~/Videos/OBS" ou "D:/Gravacoes".
-watch_dir: ""
-vault_dir: "./vault"
-
-# Monitoramento de arquivos
-watch_extensions:
-  - ".mkv"
-  - ".mp4"
-  - ".webm"
-file_stable_seconds: 10
-
-# Nº de reuniões processadas em paralelo. Padrão 1 (serial, seguro).
-# Aumente só se a máquina tiver CPU/GPU/RAM de sobra — a transcrição é o
-# componente mais pesado.
-watch_max_workers: 1
-
-# Reprocessamento automático de reuniões que falham por causa transitória
-# (rate limit, Ollama offline, JSON truncado do LLM). 0 desliga.
-max_retries: 2
-retry_delay_seconds: 30.0
-
-# Whisper (transcrição)
-# whisper_backend:
+# Backend de transcrição:
 #   "auto"   -> usa whisper.cpp se encontrado, senão openai-whisper (pip). Padrão.
-#   "openai" -> openai-whisper puro Python; baixa o modelo sozinho (mais simples)
 #   "cpp"    -> força whisper.cpp (mais rápido com GPU; requer binário + modelo .bin)
+#   "openai" -> openai-whisper puro Python; baixa o modelo sozinho (mais simples)
 whisper_backend: "auto"
 whisper_model: "large-v3-turbo"
 whisper_language: "pt"
 # "auto" deixa a lib decidir; "cuda" força GPU; "cpu" força CPU
-# (no whisper.cpp, "cpp", isso adiciona --no-gpu).
+# (no whisper.cpp isso adiciona --no-gpu).
 whisper_device: "auto"
 whisper_initial_prompt: "Transcrição de reunião em português brasileiro."
+# 0 => todos os núcleos. O padrão do whisper.cpp é 4, o que desperdiça
+# a maior parte de uma CPU moderna.
+whisper_threads: 0
 
 # Timeouts de subprocess (segundos). Evitam trava permanente com arquivo
-# corrompido — importante porque uma trava congela o worker.
+# corrompido.
 ffmpeg_timeout: 3600.0
 whisper_timeout: 14400.0
-
-# ----------------------------------------------------------
-# Provedor de LLM (resumo da reunião)
-# ----------------------------------------------------------
-# Valores: "anthropic" (Claude), "openai" (OpenAI/compatíveis),
-#          "gemini" (Google), "local" (Ollama) ou "none" (sem IA: só transcreve).
-# Env var: MEETING_LLM_PROVIDER.
-# As chaves de API ficam no .env (nunca no config.yaml).
-llm_provider: "anthropic"
-
-# Claude API — requer ANTHROPIC_API_KEY no .env
-anthropic_model: "claude-sonnet-5"
-
-# OpenAI e qualquer serviço compatível — requer OPENAI_API_KEY no .env.
-# Para usar outro serviço, troque openai_base_url:
-#   OpenRouter: https://openrouter.ai/api/v1   (modelo ex.: "openai/gpt-4o")
-#   Groq:       https://api.groq.com/openai/v1
-#   DeepSeek:   https://api.deepseek.com/v1     (modelo: "deepseek-chat")
-#   xAI/Grok:   https://api.x.ai/v1             (modelo: "grok-2-latest")
-openai_base_url: "https://api.openai.com/v1"
-openai_model: "gpt-4o"
-openai_request_timeout: 600.0
-
-# Google Gemini — requer GEMINI_API_KEY no .env
-gemini_base_url: "https://generativelanguage.googleapis.com"
-gemini_model: "gemini-2.0-flash"
-gemini_request_timeout: 600.0
-
-# Ollama (LLM local) — usado quando llm_provider == "local"
-# Requer Ollama instalado e o modelo baixado:
-#   ollama pull qwen2.5:14b
-# Veja docs/llm-local.md
-ollama_base_url: "http://localhost:11434"
-ollama_model: "qwen2.5:14b"
-ollama_temperature: 0.2
-ollama_num_ctx: 16384
-ollama_request_timeout: 600.0
-
-# Comum a todos os provedores
-summary_chunk_minutes: 5
-# Alto: resumo detalhado + extended thinking (Claude 5) consome parte do teto.
-max_tokens_summary: 16000
-
-# Reuniões longas: acima deste tamanho de transcrição (caracteres) o resumo
-# usa map-reduce (resume por blocos e consolida) em vez de uma única chamada
-# — evita truncamento e estouro de contexto. Ajuste conforme o modelo.
-summary_map_reduce_threshold_chars: 24000
-summary_map_reduce_chunk_chars: 16000
-
-# Nota de reunião
-default_tags:
-  - meeting
-  - transcription
-  - source
-note_status: "mature"
-
-# Kanban
-kanban_file: "wiki/kanban-reunioes.md"
-kanban_columns:
-  todo: "A Fazer"
-  in_progress: "Em Progresso"
-  done: "Concluído"
-
-# ----------------------------------------------------------
-# Etapas do pipeline (áudio + transcrição rodam sempre)
-# ----------------------------------------------------------
-# Desligue o resumo para o modo "só transcrição".
-# Nota/Kanban/Wiki dependem do resumo.
-enable_summary: true
-enable_note: true
-enable_kanban: true
-enable_wiki: true
 
 # Processamento
 temp_dir: ".tmp"

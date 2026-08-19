@@ -5,18 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "meeting-processor"
 version = "0.2.0"
-description = "Transcrição de reuniões do OBS + resumo por LLM + notas e Kanban no Obsidian"
+description = "Motor de transcrição de reuniões (Whisper) usado pelo app Synapse"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
 
-# Núcleo: watcher, pipeline, resumo via LLM (Anthropic + provedores HTTP).
-# torch/whisper (transcrição) fica em extra — instale só se precisar.
+# Núcleo: configuração e o comando `transcribe`.
+# torch/whisper (transcrição em Python) fica em extra — o app desktop usa
+# whisper.cpp e não precisa deles.
 # Faixas com teto no próximo major evitam quebras silenciosas.
 dependencies = [
-    "anthropic>=0.85,<1.0",
-    "httpx>=0.27,<1.0",
-    "watchdog>=3.0,<7.0",
     "pydantic>=2.0,<3.0",
     "pyyaml>=6.0,<7.0",
     "python-dotenv>=1.0,<2.0",
@@ -32,7 +30,6 @@ transcription = [
 # Ferramentas de desenvolvimento e teste.
 dev = [
     "pytest>=8.0,<9.0",
-    "pytest-asyncio>=0.23",
     "ruff>=0.6",
     "pip-audit>=2.7",
 ]
@@ -44,8 +41,6 @@ meeting-processor = "meeting_processor.__main__:main"
 include = ["meeting_processor*"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 

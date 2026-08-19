@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Garante o modelo GGML em $MODELS_DIR e chama o CLI do Meeting Processor.
+# Garante o modelo GGML em $MODELS_DIR e chama o motor de transcrição.
 #
 # O modelo (dezenas a centenas de MB) não vai na imagem: é baixado uma vez
 # para o volume /models e reaproveitado em todas as execuções seguintes.
@@ -10,10 +10,10 @@ MODELS_DIR="${MODELS_DIR:-/models}"
 MODEL_PATH="${MODELS_DIR}/ggml-${MODEL}.bin"
 BASE_URL="${WHISPER_MODEL_BASE_URL:-https://huggingface.co/ggerganov/whisper.cpp/resolve/main}"
 
-# Só os comandos que transcrevem precisam do modelo — `--help` e afins não
-# devem gastar minutos baixando centenas de MB.
+# Só a transcrição precisa do modelo — `--help` e afins não devem gastar
+# minutos baixando centenas de MB.
 case "${1:-}" in
-    transcribe|process|watch) ;;
+    transcribe) ;;
     *) exec python -m meeting_processor "$@" ;;
 esac
 

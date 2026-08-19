@@ -34,6 +34,19 @@ jobs:
       - name: Test (pytest)
         run: pytest tests/ -q
 
+  # O app tem sua própria suíte, no runner nativo do Node — sem npm install:
+  # os testes só usam módulos do projeto e do próprio Node.
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test (node:test)
+        run: npm test
+        working-directory: desktop
+
   security:
     runs-on: ubuntu-latest
     steps:

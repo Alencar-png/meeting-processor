@@ -1,18 +1,16 @@
-# Instalação completa (núcleo + transcrição local).
-# Alternativa moderna com extras seletivos: veja pyproject.toml, ex.:
+# Instalação completa (núcleo + transcrição local em Python puro).
+# Alternativa com extras seletivos, via pyproject.toml:
 #   pip install -e .                     # sem torch/whisper (usa whisper.cpp)
 #   pip install -e ".[transcription]"
 #
 # Faixas com teto no próximo major evitam quebras silenciosas em `pip install`.
 
 # Núcleo
-anthropic>=0.85,<1.0
-httpx>=0.27,<1.0
-watchdog>=3.0,<7.0
 pydantic>=2.0,<3.0
 pyyaml>=6.0,<7.0
 python-dotenv>=1.0,<2.0
 
-# Transcrição local (pesado ~2-3 GB). Dispensável se usar whisper.cpp.
+# Transcrição local com openai-whisper (pesado, ~2-3 GB).
+# Dispensável se você usar whisper.cpp, que é o caminho do app desktop.
 openai-whisper>=20230918
 torch>=2.0,<3.0

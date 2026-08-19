@@ -25,7 +25,6 @@ let drawerTranscript = '';
 let editingTaskId = '';
 let editingProjectId = '';
 let pendingVideo = '';
-let pendingKind = 'video';   // 'video' ou 'transcript'
 let recTimer = null;
 let recStartedAt = 0;
 let jobProjectId = '';
@@ -69,12 +68,10 @@ function setView(next) {
   $('top-record').hidden = next !== 'project';
   renderSidebar();
   if (next === 'home') renderHome();
-  if (next === 'projects') renderProjects();
   if (next === 'library') renderLibrary();
   if (next === 'settings') renderSettings();
   $('crumb').textContent = {
     home: 'Início',
-    projects: 'Projetos / Todos os projetos',
     library: 'Biblioteca / Todas as reuniões',
     settings: 'Sistema / Configurações',
     project: `Projetos / ${projects.find((p) => p.id === currentProjectId)?.name || ''}`,
@@ -108,10 +105,42 @@ const TAB_LABELS = { overview: 'Visão geral', kanban: 'Kanban', meetings: 'Reun
 
 function renderSidebar() {
   $('nav-home').classList.toggle('is-active', view === 'home');
-  // O módulo cobre projeto individual também: sair dele não apaga a pista.
-  $('nav-projects-all').classList.toggle('is-active', view === 'projects' || view === 'project');
   $('nav-library').classList.toggle('is-active', view === 'library');
   $('nav-settings').classList.toggle('is-active', view === 'settings');
+
+  const box = $('nav-projects');
+  box.replaceChildren();
+  for (const p of projects) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'nav-item';
+    const active = view === 'project' && p.id === currentProjectId;
+    if (active) item.classList.add('is-active');
+    item.innerHTML = `<span class="nav-glyph" aria-hidden="true">◈</span>`;
+    const name = document.createElement('span');
+    name.textContent = p.name;
+    const count = document.createElement('span');
+    count.className = 'nav-proj-count';
+    count.textContent = p.openTasks ? `${p.openTasks}` : '';
+    item.append(name, count);
+    item.addEventListener('click', () => openProject(p.id, 'overview'));
+    box.append(item);
+
+    if (active) {
+      const subs = document.createElement('div');
+      subs.className = 'nav-subs';
+      for (const [tab, label] of Object.entries(TAB_LABELS)) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'nav-sub';
+        if (tab === currentTab) b.classList.add('is-active');
+        b.textContent = label;
+        b.addEventListener('click', () => setTab(tab));
+        subs.append(b);
+      }
+      box.append(subs);
+    }
+  }
 }
 
 async function refreshProjects() {
@@ -211,289 +240,6 @@ async function renderHome() {
   if (!meetings.length) rec.append(emptyNote('Nenhuma reunião ainda. Importe um vídeo para começar.'));
   for (const m of meetings.slice(0, 5)) rec.append(meetingTile(m, { showProject: true }));
 }
-
-// --- Projetos: o módulo -----------------------------------------------------------------
-
-/** Blocos ou tabela — a escolha fica salva entre sessões. */
-let projectsMode = localStorage.getItem('projectsMode') === 'table' ? 'table' : 'grid';
-let projectsSort = { key: 'name', dir: 1 };
-
-function setProjectsMode(mode) {
-  projectsMode = mode;
-  localStorage.setItem('projectsMode', mode);
-  renderProjects();
-}
-
-async function renderProjects() {
-  await refreshProjects();
-
-  const grid = $('projects-grid');
-  const wrap = $('projects-table-wrap');
-  const vazio = $('projects-empty');
-
-  $('vs-grid').setAttribute('aria-pressed', String(projectsMode === 'grid'));
-  $('vs-table').setAttribute('aria-pressed', String(projectsMode === 'table'));
-
-  const reunioes = projects.reduce((s, p) => s + p.meetings, 0);
-  const abertas = projects.reduce((s, p) => s + p.openTasks, 0);
-  $('projects-sub').textContent = projects.length
-    ? `${projects.length} projeto(s) · ${reunioes} reunião(ões) · ${abertas} tarefa(s) aberta(s)`
-    : 'nenhum projeto';
-
-  const temProjetos = projects.length > 0;
-  vazio.hidden = temProjetos;
-  grid.hidden = !temProjetos || projectsMode !== 'grid';
-  wrap.hidden = !temProjetos || projectsMode !== 'table';
-
-  if (!temProjetos) {
-    grid.replaceChildren();
-    $('projects-tbody').replaceChildren();
-    return;
-  }
-
-  if (projectsMode === 'grid') renderProjectsGrid();
-  else renderProjectsTable();
-}
-
-/**
- * Menu de ações de um item.
- *
- * No cartão de projeto os botões ficavam soltos no canto e caíam por cima do
- * nome. Aqui as ações moram atrás de um "⋯" na própria linha do título: o
- * cartão fica limpo e nada se sobrepõe.
- */
-let popmenuAnchor = null;
-
-function openPopmenu(botao, itens) {
-  const menu = $('popmenu');
-  menu.replaceChildren();
-
-  for (const item of itens) {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = item.danger ? 'popmenu-item danger' : 'popmenu-item';
-    b.textContent = item.label;
-    b.addEventListener('click', () => {
-      closePopmenu();
-      item.onClick();
-    });
-    menu.append(b);
-  }
-
-  menu.hidden = false;
-  popmenuAnchor = botao;
-  botao.setAttribute('aria-expanded', 'true');
-
-  // Posição fixa ancorada no botão, virando para dentro quando falta espaço.
-  const r = botao.getBoundingClientRect();
-  const largura = menu.offsetWidth;
-  const altura = menu.offsetHeight;
-  const x = Math.min(r.right - largura, window.innerWidth - largura - 8);
-  const y = r.bottom + altura > window.innerHeight ? r.top - altura - 6 : r.bottom + 6;
-  menu.style.left = `${Math.max(8, x)}px`;
-  menu.style.top = `${y}px`;
-  menu.querySelector('button')?.focus();
-}
-
-function closePopmenu() {
-  const menu = $('popmenu');
-  if (menu.hidden) return;
-  menu.hidden = true;
-  popmenuAnchor?.setAttribute('aria-expanded', 'false');
-  popmenuAnchor = null;
-}
-
-window.addEventListener('pointerdown', (e) => {
-  if ($('popmenu').hidden) return;
-  if (e.target.closest('#popmenu') || e.target === popmenuAnchor) return;
-  closePopmenu();
-});
-window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePopmenu(); });
-window.addEventListener('resize', closePopmenu);
-
-/** Botão "⋯" que abre as ações do projeto. */
-function projectMenuButton(p) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'card-menu';
-  b.textContent = '⋯';
-  b.title = `Ações de ${p.name}`;
-  b.setAttribute('aria-label', `Ações de ${p.name}`);
-  b.setAttribute('aria-haspopup', 'menu');
-  b.setAttribute('aria-expanded', 'false');
-  b.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (popmenuAnchor === b) { closePopmenu(); return; }
-    openPopmenu(b, [
-      { label: 'Abrir', onClick: () => openProject(p.id, 'overview') },
-      { label: 'Editar', onClick: () => openProjectModal(p) },
-      { label: 'Excluir', danger: true, onClick: () => confirmDeleteProject(p) },
-    ]);
-  });
-  return b;
-}
-
-/** Botão pequeno de ação, usado no cartão e na linha da tabela. */
-function projectAction(label, title, onClick, extraClass = '') {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.className = `mini ${extraClass}`.trim();
-  b.textContent = label;
-  b.title = title;
-  b.setAttribute('aria-label', title);
-  b.addEventListener('click', (e) => {
-    e.stopPropagation();
-    onClick();
-  });
-  return b;
-}
-
-async function confirmDeleteProject(p) {
-  const ok = await confirmDanger({
-    title: `Excluir "${p.name}"?`,
-    message: `As reuniões continuam na biblioteca, apenas ficam sem projeto. ${p.openTasks} tarefa(s) do kanban serão apagadas.`,
-    confirmLabel: 'Excluir projeto',
-  });
-  if (!ok) return;
-  await window.api.deleteProject(p.id);
-  await renderProjects();
-  renderSidebar();
-  toast(`Projeto <strong>${p.name}</strong> excluído.`);
-}
-
-function bold(texto) {
-  const b = document.createElement('b');
-  b.textContent = texto;
-  return b;
-}
-
-function renderProjectsGrid() {
-  const grid = $('projects-grid');
-  grid.replaceChildren();
-
-  for (const p of projects) {
-    const card = document.createElement('button');
-    card.type = 'button';
-    card.className = 'proj-card';
-    card.addEventListener('click', (e) => {
-      if (e.target.closest('.card-menu')) return;
-      openProject(p.id, 'overview');
-    });
-
-    const head = document.createElement('div');
-    head.className = 'proj-card-head';
-    const glyph = document.createElement('span');
-    glyph.className = 'proj-card-glyph';
-    glyph.setAttribute('aria-hidden', 'true');
-    glyph.textContent = '◈';
-    const name = document.createElement('span');
-    name.className = 'proj-card-name';
-    name.textContent = p.name;
-    head.append(glyph, name, projectMenuButton(p));
-
-    const ctx = document.createElement('p');
-    ctx.className = 'proj-card-context';
-    ctx.textContent = p.context
-      || 'Sem contexto. O contexto orienta o tom dos documentos gerados pela IA.';
-
-    const foot = document.createElement('div');
-    foot.className = 'proj-card-foot';
-    const reun = document.createElement('span');
-    reun.append(bold(p.meetings), document.createTextNode(' reuniões'));
-    const tar = document.createElement('span');
-    tar.className = 'open';
-    tar.append(bold(p.openTasks), document.createTextNode(' abertas'));
-    const when = document.createElement('span');
-    when.className = 'when';
-    when.textContent = p.lastMeetingAt ? fmtDate(p.lastMeetingAt) : '—';
-    when.title = p.lastMeetingAt ? 'Última reunião' : 'Nenhuma reunião ainda';
-    foot.append(reun, tar, when);
-
-    card.append(head, ctx, foot);
-    grid.append(card);
-  }
-}
-
-function renderProjectsTable() {
-  const tbody = $('projects-tbody');
-  tbody.replaceChildren();
-
-  const { key, dir } = projectsSort;
-  const ordenados = [...projects].sort((a, b) => {
-    const va = a[key];
-    const vb = b[key];
-    if (typeof va === 'string') return va.localeCompare(vb) * dir;
-    return (va - vb) * dir;
-  });
-
-  for (const th of $('projects-table').querySelectorAll('th[data-sort]')) {
-    const ativo = th.dataset.sort === key;
-    th.toggleAttribute('data-active', ativo);
-    const antigo = th.querySelector('.caret');
-    if (antigo) antigo.remove();
-    if (!ativo) continue;
-    const seta = document.createElement('span');
-    seta.className = 'caret';
-    seta.textContent = dir === 1 ? '↑' : '↓';
-    th.append(seta);
-  }
-
-  for (const p of ordenados) {
-    const tr = document.createElement('tr');
-    tr.tabIndex = 0;
-    tr.addEventListener('click', () => openProject(p.id, 'overview'));
-    tr.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') openProject(p.id, 'overview');
-    });
-
-    const nome = document.createElement('td');
-    nome.textContent = p.name;
-
-    const reun = document.createElement('td');
-    reun.className = 'num';
-    reun.textContent = p.meetings;
-
-    const abertas = document.createElement('td');
-    abertas.className = 'num';
-    abertas.textContent = p.openTasks;
-
-    const quando = document.createElement('td');
-    quando.className = 'dim';
-    quando.textContent = p.lastMeetingAt ? fmtDate(p.lastMeetingAt) : '—';
-
-    const ctx = document.createElement('td');
-    ctx.className = 'ctx';
-    ctx.textContent = p.context || '—';
-    if (p.context) ctx.title = p.context;
-
-    const acts = document.createElement('td');
-    acts.className = 'acts-col';
-    const box = document.createElement('div');
-    box.className = 'row-acts';
-    box.append(
-      projectAction('abrir', `Abrir ${p.name}`, () => openProject(p.id, 'overview')),
-      projectAction('editar', `Editar ${p.name}`, () => openProjectModal(p)),
-      projectAction('excluir', `Excluir ${p.name}`, () => confirmDeleteProject(p), 'danger'),
-    );
-    acts.append(box);
-
-    tr.append(nome, reun, abertas, quando, ctx, acts);
-    tbody.append(tr);
-  }
-}
-
-$('vs-grid').addEventListener('click', () => setProjectsMode('grid'));
-$('vs-table').addEventListener('click', () => setProjectsMode('table'));
-$('projects-new').addEventListener('click', () => openProjectModal());
-$('projects-table').querySelectorAll('th[data-sort]').forEach((th) => {
-  th.addEventListener('click', () => {
-    const key = th.dataset.sort;
-    projectsSort = key === projectsSort.key
-      ? { key, dir: projectsSort.dir * -1 }
-      : { key, dir: key === 'name' ? 1 : -1 };
-    renderProjectsTable();
-  });
-});
 
 // --- Projeto: visão geral -----------------------------------------------------------
 
@@ -812,8 +558,13 @@ $('lib-group').addEventListener('change', () => { libView.group = $('lib-group')
 
 async function checkEngine() {
   engines = await window.api.enginesStatus();
-  const active = engines.active === 'native' ? engines.native : engines.docker;
+  const isNative = engines.active === 'native';
+  const active = isNative ? engines.native : engines.docker;
   engineReady = Boolean(active.ok);
+  $('engine').dataset.ok = String(engineReady);
+  $('engine-text').textContent = engineReady
+    ? (isNative ? 'GPU · whisper.cpp' : `Docker ${engines.docker.version} · CPU`)
+    : 'motor indisponível';
 }
 
 function renderSettings() {
@@ -892,29 +643,20 @@ async function openDrawer(meetingId) {
     meta.append(div);
   }
 
-  // Os arquivos são os que existem na pasta, com o caminho real: clicar abre
-  // no programa padrão do sistema.
   const files = $('drawer-files');
   files.replaceChildren();
-  const ROTULOS = { md: 'transcrição', txt: 'texto', pdf: 'documento' };
-  for (const f of m.files || []) {
+  const rows = [[`${m.name}.md`, 'transcrição'], [`${m.name}.txt`, 'texto']];
+  if (m.hasResumo) rows.push(['resumo.pdf', 'documento']);
+  if (m.hasTarefas) rows.push(['tarefas.pdf', 'documento']);
+  for (const [name, kind] of rows) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'file-row';
-    b.title = `Abrir ${f.name}`;
-    const nome = document.createElement('span');
-    nome.textContent = f.name;
-    const tipo = document.createElement('span');
-    tipo.className = 'ext';
-    tipo.textContent = `${ROTULOS[f.ext] || f.ext} · ${f.sizeKB} KB`;
-    b.append(nome, tipo);
-    b.addEventListener('click', () => window.api.openPath(f.path));
+    b.innerHTML = `<span></span><span class="ext">${kind}</span>`;
+    b.firstChild.textContent = name;
+    b.addEventListener('click', () => window.api.openPath(name));
     files.append(b);
   }
-  if (!(m.files || []).length) files.append(emptyNote('Nenhum arquivo nesta reunião.'));
-
-  // O botão só aparece quando a geração automática não deixou os dois PDFs.
-  $('drawer-docs').hidden = m.hasResumo && m.hasTarefas;
 
   renderReader(drawerTranscript, '');
   $('drawer').hidden = false;
@@ -928,58 +670,23 @@ function closeDrawer() {
 }
 
 /** Destaca ocorrências sem interpretar HTML. */
-/**
- * Leitor da transcrição.
- *
- * O arquivo é Markdown: mostrar a marcação crua ("**[00:12]**") faz o texto
- * parecer código. Aqui o horário vira uma etiqueta discreta e a fala fica como
- * texto — sem interpretar Markdown completo, que seria mais superfície do que
- * esta tela precisa.
- */
 function renderReader(text, termo) {
   const out = $('drawer-text');
   out.replaceChildren();
   const busca = termo.trim().toLowerCase();
-
-  const escrever = (destino, trecho) => {
-    if (!busca) { destino.append(document.createTextNode(trecho)); return; }
-    const fonte = trecho.toLowerCase();
-    let cursor = 0;
-    let hit = fonte.indexOf(busca);
-    while (hit !== -1) {
-      destino.append(document.createTextNode(trecho.slice(cursor, hit)));
-      const mark = document.createElement('mark');
-      mark.textContent = trecho.slice(hit, hit + busca.length);
-      destino.append(mark);
-      cursor = hit + busca.length;
-      hit = fonte.indexOf(busca, cursor);
-    }
-    destino.append(document.createTextNode(trecho.slice(cursor)));
-  };
-
-  for (const linha of text.split('\n')) {
-    const limpa = linha.trim();
-    // O cabeçalho e os metadados do arquivo já aparecem no topo do painel.
-    if (!limpa || limpa === '---' || limpa.startsWith('# ')) continue;
-    if (/^\*\*[^*]+:\*\*/.test(limpa)) continue;
-
-    const fala = limpa.match(/^\*\*\[(\d{2}:\d{2}(?::\d{2})?)\]\*\*\s*(.*)$/);
-    const p = document.createElement('p');
-    p.className = 'reader-line';
-    if (fala) {
-      const hora = document.createElement('span');
-      hora.className = 'reader-time';
-      hora.textContent = fala[1];
-      p.append(hora);
-      escrever(p, fala[2]);
-    } else {
-      escrever(p, limpa.replace(/\*\*/g, ''));
-    }
-    out.append(p);
+  if (!busca) { out.textContent = text; return; }
+  const fonte = text.toLowerCase();
+  let cursor = 0;
+  let hit = fonte.indexOf(busca);
+  while (hit !== -1) {
+    out.append(document.createTextNode(text.slice(cursor, hit)));
+    const mark = document.createElement('mark');
+    mark.textContent = text.slice(hit, hit + busca.length);
+    out.append(mark);
+    cursor = hit + busca.length;
+    hit = fonte.indexOf(busca, cursor);
   }
-
-  // Formato inesperado: melhor o texto cru do que uma tela vazia.
-  if (!out.childElementCount) escrever(out, text);
+  out.append(document.createTextNode(text.slice(cursor)));
 }
 
 $('drawer-search').addEventListener('input', () => renderReader(drawerTranscript, $('drawer-search').value));
@@ -1008,28 +715,18 @@ $('drawer-rename').addEventListener('click', () => {
 });
 
 $('drawer-delete').addEventListener('click', async () => {
-  const ok = await confirmDanger({
-    title: 'Excluir esta reunião?',
-    message: 'A transcrição e os documentos gerados serão apagados do disco. Não dá para desfazer.',
-    confirmLabel: 'Excluir reunião',
-  });
-  if (!ok) return;
+  if (!window.confirm('Excluir esta reunião? Os arquivos serão apagados do disco. Não dá para desfazer.')) return;
   await window.api.deleteMeeting(drawerMeetingId);
   closeDrawer();
   await refreshAll();
 });
 
-$('drawer-docs').addEventListener('click', async () => {
-  const alvo = drawerMeetingId;
-  closeDrawer();
-  enterDocPhase(alvo);
-  const r = await window.api.generateDoc({ meetingId: alvo });
-  if (r && r.started === false) {
-    docPhase = false;
-    $('overlay-process').hidden = true;
-    toast(r.message);
-  }
-});
+for (const kind of ['resumo', 'tarefas']) {
+  $(`drawer-${kind}`).addEventListener('click', async () => {
+    toast(`Gerando <strong>${kind}</strong> — o Claude está lendo a reunião…`);
+    await window.api.generateDoc({ kind, meetingId: drawerMeetingId });
+  });
+}
 
 // --- Modais -----------------------------------------------------------------
 
@@ -1037,39 +734,6 @@ function openModal(id) {
   $('modal-scrim').hidden = false;
   $(id).hidden = false;
 }
-/**
- * Confirmação de ação destrutiva.
- *
- * A caixa do sistema trava a janela, ignora o tema e não cabe o detalhe do que
- * será apagado. Aqui a pergunta é do app: diz o que some e o que fica, e
- * responde a Esc e Enter.
- */
-let dangerResolve = null;
-
-function confirmDanger({ title, message, confirmLabel = 'Excluir' }) {
-  $('md-title').textContent = title;
-  $('md-message').textContent = message;
-  $('md-confirm').textContent = confirmLabel;
-  openModal('modal-danger');
-  $('md-confirm').focus();
-
-  return new Promise((resolve) => {
-    dangerResolve = resolve;
-  });
-}
-
-function closeDanger(resposta) {
-  if (!dangerResolve) return;
-  const resolve = dangerResolve;
-  dangerResolve = null;
-  $('modal-danger').hidden = true;
-  $('modal-scrim').hidden = true;
-  resolve(resposta);
-}
-
-$('md-confirm').addEventListener('click', () => closeDanger(true));
-$('md-cancel').addEventListener('click', () => closeDanger(false));
-
 function closeModals() {
   $('modal-scrim').hidden = true;
   for (const id of ['modal-project', 'modal-task', 'modal-confirm']) $(id).hidden = true;
@@ -1077,7 +741,6 @@ function closeModals() {
 $('modal-scrim').addEventListener('click', closeModals);
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') { closeModals(); closeDrawer(); }
-  if (e.key === 'Enter' && dangerResolve) closeDanger(true);
 });
 
 // Projeto: criar/editar.
@@ -1106,12 +769,7 @@ $('mp-form').addEventListener('submit', async (e) => {
 $('mp-delete').addEventListener('click', async () => {
   const p = projects.find((x) => x.id === editingProjectId);
   if (!p) return;
-  const ok = await confirmDanger({
-    title: `Excluir "${p.name}"?`,
-    message: 'As reuniões continuam na biblioteca, apenas ficam sem projeto. As tarefas do kanban serão apagadas.',
-    confirmLabel: 'Excluir projeto',
-  });
-  if (!ok) return;
+  if (!window.confirm(`Excluir "${p.name}"?\n\nAs reuniões continuam na biblioteca, apenas ficam sem projeto. As tarefas do kanban serão apagadas.`)) return;
   await window.api.deleteProject(editingProjectId);
   closeModals();
   await refreshProjects();
@@ -1120,6 +778,7 @@ $('mp-delete').addEventListener('click', async () => {
 
 $('mp-cancel').addEventListener('click', closeModals);
 $('nav-new-project').addEventListener('click', () => openProjectModal());
+$('home-new-project').addEventListener('click', () => openProjectModal());
 $('overview-edit').addEventListener('click', () => openProjectModal(projects.find((x) => x.id === currentProjectId)));
 
 // Tarefa: criar/editar.
@@ -1170,19 +829,12 @@ $('mt-delete').addEventListener('click', async () => {
 $('mt-cancel').addEventListener('click', closeModals);
 
 // Importação: confirmar nome + projeto.
-function askImport(filePath, kind = "video") {
-  // Transcrição pronta não passa pelo Whisper: motor parado não impede.
-  if (kind === 'video' && !engineReady) {
-    toast('O motor de transcrição não está disponível — veja as <strong>Configurações</strong>.');
-    return;
-  }
-  pendingVideo = filePath;
-  pendingKind = kind;
-  $('mc-file').textContent = filePath.split(/[\\/]/).pop();
-  $('mc-name').value = filePath.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
+function askImport(videoPath) {
+  if (!engineReady) { toast('O motor de transcrição não está disponível — veja as <strong>Configurações</strong>.'); return; }
+  pendingVideo = videoPath;
+  $('mc-file').textContent = videoPath.split(/[\\/]/).pop();
+  $('mc-name').value = videoPath.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
   $('mc-error').textContent = '';
-  $('mc-submit').textContent = kind === 'video' ? 'Transcrever' : 'Importar';
-  $('mc-auto').checked = false;
   const sel = $('mc-project');
   sel.replaceChildren(new Option('sem projeto', ''));
   for (const p of projects) sel.append(new Option(p.name, p.id));
@@ -1198,35 +850,18 @@ $('mc-form').addEventListener('submit', async (e) => {
   if (!nome) { $('mc-error').textContent = 'Dê um nome à reunião.'; return; }
   if (/[<>:"/\\|?*]/.test(nome)) { $('mc-error').textContent = 'O nome não pode conter < > : " / \\ | ? *'; return; }
   const projectId = $('mc-project').value;
-  const autoName = $('mc-auto').checked;
   closeModals();
-
-  if (pendingKind === 'transcript') {
-    startProcessing($('mc-file').textContent, projectId);
-    const r = await window.api.importTranscript({ filePath: pendingVideo, name: nome, projectId, autoName });
-    if (!r.ok) {
-      $('overlay-process').hidden = true;
-      toast(`Não deu para importar: ${r.message}`);
-    }
-    return;
-  }
-
   startProcessing($('mc-file').textContent, projectId);
-  await window.api.startJob({ videoPath: pendingVideo, name: nome, projectId, autoName });
+  await window.api.startJob({ videoPath: pendingVideo, name: nome, projectId });
 });
 
 $('mc-cancel').addEventListener('click', closeModals);
 
 async function pickAndImport() {
   const path = await window.api.pickVideo();
-  if (path) askImport(path, 'video');
+  if (path) askImport(path);
 }
-
-async function pickAndImportTranscript() {
-  const path = await window.api.pickTranscript();
-  if (path) askImport(path, 'transcript');
-}
-$('home-import-text').addEventListener('click', pickAndImportTranscript);
+$('top-import').addEventListener('click', pickAndImport);
 $('home-import').addEventListener('click', pickAndImport);
 
 // Soltar um vídeo em qualquer lugar da janela também importa.
@@ -1241,219 +876,56 @@ window.addEventListener('drop', (e) => {
 
 // --- Gravação -----------------------------------------------------------------
 
-/**
- * Grava a reunião pelo app: junta o microfone e o áudio que sai pelos
- * alto-falantes num arquivo só. Numa chamada online o microfone traz o nosso
- * lado e o loopback do sistema traz o resto da sala — gravar só o microfone
- * daria uma transcrição pela metade.
- */
-let recorder = null;
-let recStreams = [];
-let recChunks = [];
-
-async function captureAudio() {
-  const trilhas = [];
-  const contexto = new AudioContext();
-  const destino = contexto.createMediaStreamDestination();
-  let mic = false;
-  let sistema = false;
-
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    recStreams.push(stream);
-    contexto.createMediaStreamSource(stream).connect(destino);
-    mic = true;
-  } catch { /* sem microfone: seguimos com o que houver */ }
-
-  try {
-    // O vídeo vem junto porque o Chromium exige uma fonte de tela; a trilha é
-    // descartada logo em seguida — o que interessa é o áudio do sistema.
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    recStreams.push(stream);
-    stream.getVideoTracks().forEach((t) => t.stop());
-    if (stream.getAudioTracks().length) {
-      contexto.createMediaStreamSource(stream).connect(destino);
-      sistema = true;
-    }
-  } catch { /* sem loopback: microfone basta */ }
-
-  if (!mic && !sistema) {
-    contexto.close();
-    return null;
-  }
-
-  trilhas.push(...destino.stream.getAudioTracks());
-  return { stream: new MediaStream(trilhas), contexto, mic, sistema };
-}
-
-function releaseAudio(contexto) {
-  recStreams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
-  recStreams = [];
-  if (contexto) contexto.close();
-}
-
-/**
- * Começa a gravar.
- *
- * O projeto é escolhido na própria tela de gravação: daqui do Início não há
- * um projeto em foco, e sem projeto as tarefas extraídas não teriam kanban
- * onde cair. `preferido` apenas deixa o seletor já na opção certa quando a
- * gravação parte de dentro de um projeto.
- */
-async function startRecording(preferido = '') {
+$('top-record').addEventListener('click', () => {
   if (!engineReady) { toast('O motor de transcrição não está disponível.'); return; }
-  if (recorder) { toast('Já existe uma gravação em andamento.'); return; }
-
-  const captura = await captureAudio();
-  if (!captura) {
-    toast('Nenhuma fonte de áudio disponível. Libere o microfone e tente de novo.');
-    return;
-  }
-
-  recChunks = [];
-  recorder = new MediaRecorder(captura.stream, { mimeType: 'audio/webm' });
-  recorder.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data); };
-  recorder.onstop = () => releaseAudio(captura.contexto);
-  recorder.start(1000);   // um bloco por segundo: perda máxima de 1s se travar
-
-  const select = $('record-project');
-  select.replaceChildren();
-  const semProjeto = document.createElement('option');
-  semProjeto.value = '';
-  semProjeto.textContent = projects.length ? 'Sem projeto' : 'Sem projeto — crie um para gerar tarefas';
-  select.append(semProjeto);
-  for (const p of projects) {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.name;
-    select.append(opt);
-  }
-  select.value = preferido || '';
-
+  const p = projects.find((x) => x.id === currentProjectId);
+  $('record-project').textContent = p ? p.name : '';
   $('record-clock').textContent = '00:00';
-  $('record-fonte').textContent = captura.sistema
-    ? 'microfone + áudio do sistema'
-    : 'somente microfone';
   $('overlay-record').hidden = false;
-  if (!recordNet) recordNet = window.createNetwork($('record-net'));
+  if (!recordNet) recordNet = window.createNeural($('record-net'));
   window.dispatchEvent(new Event('resize'));
   recordNet.setMode('dragging');
   recStartedAt = Date.now();
   recTimer = setInterval(() => {
     $('record-clock').textContent = clock((Date.now() - recStartedAt) / 1000);
   }, 500);
-}
-
-$('top-record').addEventListener('click', () => startRecording(currentProjectId));
-$('home-record').addEventListener('click', () => startRecording(currentProjectId));
+});
 
 function stopRecordingUI() {
   clearInterval(recTimer);
   $('overlay-record').hidden = true;
 }
 
-/** Encerra o gravador e devolve o áudio completo. */
-function finishRecording() {
-  return new Promise((resolve) => {
-    if (!recorder || recorder.state === 'inactive') { resolve(null); return; }
-    recorder.addEventListener('stop', () => {
-      const blob = new Blob(recChunks, { type: 'audio/webm' });
-      recorder = null;
-      recChunks = [];
-      resolve(blob.size ? blob : null);
-    }, { once: true });
-    recorder.stop();
-  });
-}
-
-$('record-cancel').addEventListener('click', async () => {
-  stopRecordingUI();
-  await finishRecording();   // descarta o áudio: cancelar é cancelar
-  toast('Gravação descartada.');
-});
+$('record-cancel').addEventListener('click', stopRecordingUI);
 
 $('record-stop').addEventListener('click', async () => {
   const duration = (Date.now() - recStartedAt) / 1000;
+  const p = projects.find((x) => x.id === currentProjectId);
   stopRecordingUI();
-
-  const blob = await finishRecording();
-  if (!blob) { toast('A gravação saiu vazia.'); return; }
-
   const name = `Reunião ${fmtDate(Date.now())} ${new Date().getHours()}h${pad(new Date().getMinutes())}`;
-  const projectId = $('record-project').value;
-  startProcessing(name, projectId);
-
-  const result = await window.api.processRecording({
-    projectId: currentProjectId,
-    name,
-    duration,
-    audio: await blob.arrayBuffer(),
-    mimeType: blob.type,
-  });
-  if (result && result.started === false) {
-    $('overlay-process').hidden = true;
-    toast(`Não deu para processar: ${result.message}`);
-  }
+  startProcessing(name, currentProjectId);
+  await window.api.processRecording({ projectId: currentProjectId, name, duration });
 });
 
 // --- Processamento (pipeline) -----------------------------------------------------------------
 
 const STAGE_RANGE = { audio: [0, 0.1], transcription: [0.1, 0.72], export: [0.72, 0.78], extract: [0.78, 1] };
-const STAGE_LABELS = { audio: 'Extraindo áudio', transcription: 'Transcrevendo', export: 'Gravando arquivos', extract: 'Extraindo tarefas' };
+const STAGE_LABELS = { audio: 'Extraindo áudio', transcription: 'Transcrevendo', export: 'Gravando arquivos', extract: 'Extraindo resumo e tarefas' };
 
-/**
- * Abre a tela de processamento: a rede e uma frase que acompanha a etapa.
- *
- * A lista de passos saiu — o texto já diz onde o trabalho está, e a coluna
- * curta cabe centralizada em qualquer janela.
- */
 function startProcessing(label, projectId) {
   jobProjectId = projectId || '';
+  $('process-file').textContent = label;
   $('process-stage').textContent = 'Iniciando';
   $('process-pct').textContent = '0%';
+  for (const li of $('pipeline').children) li.className = '';
   $('overlay-process').hidden = false;
-  if (!processNet) processNet = window.createNetwork($('process-net'));
+  if (!processNet) processNet = window.createNeural($('process-net'));
   window.dispatchEvent(new Event('resize'));
   processNet.setMode('working');
   processNet.setProgress(0);
 }
 
-$('process-cancel').addEventListener('click', () => {
-  if (docPhase) window.api.cancelDoc();
-  else window.api.cancelJob();
-});
-
-/**
- * A reunião só está pronta quando os documentos estão prontos.
- *
- * A tela de trabalho continua aberta na etapa dos PDFs em vez de fechar e
- * deixar o resto acontecer atrás de avisos no rodapé. O Claude não informa
- * percentual, então cada passo do stream empurra a barra um pouco — resumo na
- * primeira metade, tarefas na segunda.
- */
-let docPhase = false;
-let docProgress = 0;
-let pendingMeetingId = '';
-let jobSummary = null;   // o que contar quando tudo terminar
-
-function enterDocPhase(meetingId) {
-  docPhase = true;
-  docProgress = 0;
-  pendingMeetingId = meetingId || '';
-  $('process-stage').textContent = 'Gerando resumo e tarefas';
-  $('process-pct').textContent = '0%';
-  $('overlay-process').hidden = false;
-  processNet?.setMode('working');
-  processNet?.setProgress(0);
-}
-
-function advanceDocs(kind) {
-  const base = kind === 'tarefas' ? 0.5 : 0;
-  const teto = kind === 'tarefas' ? 0.97 : 0.5;
-  docProgress = Math.min(teto, Math.max(base, docProgress + 0.07));
-  processNet?.setProgress(docProgress);
-  $('process-pct').textContent = `${Math.round(docProgress * 100)}%`;
-}
+$('process-cancel').addEventListener('click', () => window.api.cancelJob());
 
 window.api.on('job:event', async (event) => {
   if (event.event === 'stage') {
@@ -1462,74 +934,50 @@ window.api.on('job:event', async (event) => {
     processNet?.setProgress(overall);
     $('process-pct').textContent = `${Math.round(overall * 100)}%`;
     $('process-stage').textContent = STAGE_LABELS[event.key] || event.label || '';
+    for (const li of $('pipeline').children) {
+      const idx = ['audio', 'transcription', 'export', 'extract'];
+      const cur = idx.indexOf(event.key);
+      const mine = idx.indexOf(li.dataset.step);
+      li.className = mine < cur ? 'is-done' : mine === cur ? 'is-active' : '';
+    }
   } else if (event.event === 'done') {
     processNet?.setProgress(1);
-    $('process-stage').textContent = 'Transcrição pronta';
-    await refreshAll();
-    if (jobProjectId) openProject(jobProjectId, event.tasksCreated ? 'kanban' : 'meetings');
-    // Nada de aviso agora: a tela de trabalho segue aberta para os documentos,
-    // e uma notificação por cima dela só atrapalharia. O que aconteceu aqui
-    // entra no aviso único do fim.
-    jobSummary = { renamedTo: event.renamedTo || '', tasksCreated: event.tasksCreated || 0 };
-    setTimeout(() => enterDocPhase(event.meetingId), 700);
+    for (const li of $('pipeline').children) li.className = 'is-done';
+    setTimeout(async () => {
+      $('overlay-process').hidden = true;
+      await refreshAll();
+      toast(event.tasksCreated
+        ? `Reunião pronta — <strong>${event.tasksCreated} tarefas</strong> criadas no kanban`
+        : 'Reunião pronta — transcrição na biblioteca');
+      if (jobProjectId) openProject(jobProjectId, event.tasksCreated ? 'kanban' : 'meetings');
+      if (event.meetingId) openDrawer(event.meetingId);
+    }, 600);
   } else if (event.event === 'error') {
-    docPhase = false;
     $('overlay-process').hidden = true;
     toast(`Não deu para processar: ${event.message || 'erro desconhecido'}`);
   } else if (event.event === 'canceled') {
-    docPhase = false;
     $('overlay-process').hidden = true;
   }
-});
-
-window.api.on('doc:progress', ({ kind }) => {
-  if (!docPhase) return;
-  advanceDocs(kind);
 });
 
 window.api.on('doc:done', async (result) => {
-  const meetingId = result.meetingId || pendingMeetingId;
-  if (docPhase) {
-    processNet?.setProgress(1);
-    $('process-pct').textContent = '100%';
-    $('process-stage').textContent = 'Pronto';
-    await pausaCurta();
-    $('overlay-process').hidden = true;
-    docPhase = false;
-    pendingMeetingId = '';
+  if (result.ok) {
+    toast(`<strong>${result.kind === 'tarefas' ? 'Tarefas' : 'Resumo'}</strong> gerado em PDF.`);
+    if (drawerMeetingId === result.meetingId) openDrawer(result.meetingId);
+    refreshAll();
   }
-
-  await refreshAll();
-
-  if (result.canceled) { toast('Geração cancelada.'); return; }
-  if (!result.ok) {
-    toast(`Os documentos não foram gerados. ${result.message || ''}`.trim());
-    if (meetingId) openDrawer(meetingId);
-    return;
-  }
-
-  // Um aviso só, no fim: nome, tarefas e documentos numa frase.
-  const partes = [];
-  if (jobSummary?.renamedTo) partes.push(`Reunião pronta como <strong>${jobSummary.renamedTo}</strong>`);
-  else partes.push('Reunião pronta');
-  if (jobSummary?.tasksCreated) partes.push(`<strong>${jobSummary.tasksCreated} tarefas</strong> no kanban`);
-  const nomes = result.kinds.map((k) => (k === 'tarefas' ? 'tarefas' : 'resumo'));
-  if (nomes.length) partes.push(`${nomes.join(' e ')} em PDF`);
-  jobSummary = null;
-  toast(partes.join(' · '));
-  if (meetingId) openDrawer(meetingId);
 });
 
-function pausaCurta() {
-  return new Promise((resolve) => setTimeout(resolve, 700));
-}
+window.api.on('doc:progress', ({ description }) => {
+  toast(`Gerando documento — ${description}…`);
+});
 
 // --- Navegação: ligações -----------------------------------------------------------------
 
 $('nav-home').addEventListener('click', () => setView('home'));
-$('nav-projects-all').addEventListener('click', () => setView('projects'));
 $('nav-library').addEventListener('click', () => setView('library'));
 $('nav-settings').addEventListener('click', () => setView('settings'));
+$('engine').addEventListener('click', () => setView('settings'));
 $('project-tabs').addEventListener('click', (e) => {
   const b = e.target.closest('.tab');
   if (b) setTab(b.dataset.tab);

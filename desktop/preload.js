@@ -5,6 +5,8 @@
  *
  * A janela não tem acesso a Node: tudo passa por esta API explícita, o que
  * mantém o renderer incapaz de tocar no sistema de arquivos por conta própria.
+ * A superfície abaixo é o contrato do Synapse — projetos, reuniões, tarefas,
+ * pipeline, documentos e chat.
  */
 
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
@@ -28,38 +30,51 @@ contextBridge.exposeInMainWorld('api', {
   // Caminho real de um arquivo solto na janela (File.path saiu do Electron 32+).
   pathForFile: (file) => webUtils.getPathForFile(file),
 
+  // --- Configurações ---
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSettings: (patch) => ipcRenderer.invoke('settings:set', patch),
-
   enginesStatus: () => ipcRenderer.invoke('engines:status'),
   dockerStatus: () => ipcRenderer.invoke('docker:status'),
   buildImage: () => ipcRenderer.invoke('docker:build'),
 
+  // --- Projetos ---
+  listProjects: () => ipcRenderer.invoke('projects:list'),
+  saveProject: (project) => ipcRenderer.invoke('projects:save', project),
+  deleteProject: (projectId) => ipcRenderer.invoke('projects:delete', projectId),
+
+  // --- Reuniões ---
+  listMeetings: (projectId) => ipcRenderer.invoke('meetings:list', projectId),
+  getMeeting: (id) => ipcRenderer.invoke('meetings:get', id),
+  renameMeeting: (id, name) => ipcRenderer.invoke('meetings:rename', { id, name }),
+  deleteMeeting: (id, files) => ipcRenderer.invoke('meetings:delete', { id, files }),
+  assignProject: (meetingId, projectId) =>
+    ipcRenderer.invoke('meetings:assign', { meetingId, projectId }),
+  readFile: (filePath) => ipcRenderer.invoke('meetings:read', filePath),
+  downloadFile: (filePath) => ipcRenderer.invoke('meetings:download', filePath),
+
+  // --- Tarefas (Kanban) ---
+  listTasks: (projectId) => ipcRenderer.invoke('tasks:list', projectId),
+  saveTask: (task) => ipcRenderer.invoke('tasks:save', task),
+  moveTask: (id, status) => ipcRenderer.invoke('tasks:move', { id, status }),
+  deleteTask: (id) => ipcRenderer.invoke('tasks:delete', id),
+
+  // --- Pipeline: importação e gravação ---
   startJob: (payload) => ipcRenderer.invoke('job:start', payload),
+  importTranscript: (payload) => ipcRenderer.invoke('transcript:import', payload),
+  processRecording: (payload) => ipcRenderer.invoke('job:recording', payload),
   cancelJob: () => ipcRenderer.invoke('job:cancel'),
 
-  // Documentos gerados pelo Claude a partir da transcrição.
-  startDoc: (payload) => ipcRenderer.invoke('doc:start', payload),
+  // --- Documentos gerados a partir da transcrição ---
+  generateDoc: (payload) => ipcRenderer.invoke('doc:generate', payload),
   cancelDoc: () => ipcRenderer.invoke('doc:cancel'),
 
-  // Biblioteca de transcrições.
-  listMeetings: () => ipcRenderer.invoke('library:list'),
-  getMeeting: (id) => ipcRenderer.invoke('library:get', id),
-  renameMeeting: (id, name) => ipcRenderer.invoke('library:rename', { id, name }),
-  deleteMeeting: (id, files) => ipcRenderer.invoke('library:delete', { id, files }),
-  readFile: (filePath) => ipcRenderer.invoke('library:read', filePath),
-  downloadFile: (filePath) => ipcRenderer.invoke('library:download', filePath),
+  // --- Chat por projeto ---
+  chatAsk: (payload) => ipcRenderer.invoke('chat:ask', payload),
 
-  // Grupos (projetos) e seus contextos.
-  listGroups: () => ipcRenderer.invoke('groups:list'),
-  saveGroup: (group) => ipcRenderer.invoke('groups:save', group),
-  deleteGroup: (groupId) => ipcRenderer.invoke('groups:delete', groupId),
-  assignGroup: (meetingId, groupId) =>
-    ipcRenderer.invoke('groups:assign', { meetingId, groupId }),
-
+  // --- Sistema ---
   pickOutputDir: () => ipcRenderer.invoke('dialog:pickOutputDir'),
   pickVideo: () => ipcRenderer.invoke('dialog:pickVideo'),
-
+  pickTranscript: () => ipcRenderer.invoke('dialog:pickTranscript'),
   showInFolder: (filePath) => ipcRenderer.invoke('shell:showInFolder', filePath),
   openPath: (filePath) => ipcRenderer.invoke('shell:openPath', filePath),
 

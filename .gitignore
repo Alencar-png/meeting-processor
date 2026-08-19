@@ -46,3 +46,6 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+
+# Atalhos do Windows: guardam caminhos absolutos da máquina.
+*.lnk

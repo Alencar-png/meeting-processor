@@ -8,7 +8,9 @@
  * processo só faz o spawn, lê os eventos JSONL do stdout e repassa à janela.
  */
 
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const {
+  app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, shell,
+} = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -23,13 +25,20 @@ const {
 } = require('./engines');
 const {
   buildClaudeArgs,
+  buildExtractionPrompt,
   buildPrompt,
   describeEvent,
+  extractionPathFor,
   findBrowser,
+  findClaude,
   pdfPathFor,
 } = require('./claude-jobs');
 const library = require('./library');
-const groups = require('./groups');
+const db = require('./db');
+const projects = require('./projects');
+const tasks = require('./tasks');
+const workspace = require('./workspace');
+const transcriptImport = require('./transcript-import');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
@@ -42,7 +51,7 @@ const MEDIA_EXTENSIONS = [
 const DEFAULT_SETTINGS = {
   outputDir: path.join(app.getPath('documents'), 'Transcricoes'),
   engine: 'native',    // 'native' (GPU) ou 'docker' (CPU)
-  model: 'small',      // modelo do motor docker
+  model: 'large-v3-turbo',   // modelo do motor docker
   nativeModel: '',     // caminho do .bin escolhido no motor nativo
   language: 'pt',
   formats: ['md', 'txt'],
@@ -51,6 +60,7 @@ const DEFAULT_SETTINGS = {
 let mainWindow = null;
 let currentJob = null;    // transcrição em andamento
 let currentDocJob = null; // geração de PDF em andamento
+let currentExtraction = null; // extração de tarefas em andamento
 
 // --- Configurações persistidas ---------------------------------------------
 
@@ -130,14 +140,33 @@ async function enginesStatus() {
 
 // --- Janela -----------------------------------------------------------------
 
+/**
+ * Autoriza a janela a capturar o áudio que sai pelos alto-falantes.
+ *
+ * Numa reunião online o microfone só pega o nosso lado; o que a outra parte
+ * fala vem pelo loopback do sistema. Pedimos a tela só porque o Chromium exige
+ * uma fonte de vídeo junto — o renderer descarta essa trilha e grava só áudio.
+ */
+function enableSystemAudioCapture() {
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      callback({ video: sources[0], audio: 'loopback' });
+    } catch {
+      callback({});   // sem loopback: o renderer segue só com o microfone
+    }
+  }, { useSystemPicker: false });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 940,
-    height: 800,
-    minWidth: 760,
+    width: 1280,
+    height: 860,
+    minWidth: 880,
     minHeight: 660,
-    backgroundColor: '#14110F',
-    title: 'Meeting Processor',
+    backgroundColor: '#070A14',
+    title: 'Synapse',
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -232,7 +261,12 @@ function startJob(payload) {
     );
   }
 
-  currentJob = { child, containerName, canceled: false, outputDir, engine };
+  currentJob = {
+    child, containerName, canceled: false, outputDir, engine,
+    projectId: payload.projectId || '',
+    autoName: Boolean(payload.autoName),   // deixa a IA nomear pelo conteúdo
+    cleanup: payload.cleanup || '',        // gravação temporária, apagada no fim
+  };
 
   let stdoutBuffer = '';
   let lastError = '';
@@ -248,6 +282,14 @@ function startJob(payload) {
         const event = JSON.parse(trimmed);
         if (event.event === 'done' && Array.isArray(event.files)) {
           event.files = event.files.map((f) => toHostPath(f, outputDir));
+          // A reunião acabou de nascer: o id é a pasta que recebeu os arquivos.
+          event.meetingId = workspace.meetingIdFromFiles(outputDir, event.files);
+          const projectId = currentJob?.projectId;
+          if (event.meetingId && projectId) {
+            projects.assignMeeting(outputDir, event.meetingId, projectId);
+          }
+          finishJob(event, outputDir, projectId, currentJob?.autoName);
+          continue;   // o done é anunciado depois da extração
         }
         if (event.event === 'error') lastError = event.message;
         send('job:event', event);
@@ -274,7 +316,12 @@ function startJob(payload) {
 
   child.on('close', (code) => {
     const wasCanceled = currentJob?.canceled;
+    const temporario = currentJob?.cleanup;
     currentJob = null;
+    // A gravação bruta já virou transcrição: não precisa ocupar disco.
+    if (temporario) {
+      try { fs.unlinkSync(temporario); } catch { /* já removido */ }
+    }
     if (wasCanceled) {
       send('job:event', { event: 'canceled' });
     } else if (code !== 0) {
@@ -289,7 +336,220 @@ function startJob(payload) {
   return { started: true, containerName };
 }
 
+/**
+ * Gravação feita dentro do app (REC-04): o áudio capturado na janela chega
+ * como bytes, vira um arquivo e entra no mesmo pipeline da importação. A
+ * origem muda; o processamento é o de sempre.
+ */
+/**
+ * Extração estruturada (AI-02): logo depois da transcrição, o Claude lê o
+ * texto e devolve as ações combinadas em JSON, que viram cards no kanban do
+ * projeto. É o que faz a reunião terminar sem trabalho manual.
+ *
+ * Falha aqui não derruba o job: a transcrição já está no disco, e uma extração
+ * que não veio é um kanban vazio, não uma reunião perdida.
+ */
+/**
+ * Importa uma transcrição já pronta (texto ou legenda).
+ *
+ * Não há áudio para extrair nem nada para transcrever: o arquivo vira reunião
+ * direto e, havendo projeto, segue para a extração de tarefas como qualquer
+ * outra. Os eventos são os mesmos do pipeline para a janela não precisar de um
+ * segundo caminho de progresso.
+ */
+async function importTranscriptJob({ filePath, name, projectId, autoName = false }) {
+  if (currentJob || currentExtraction) {
+    return { ok: false, message: 'Espere o processamento em andamento terminar.' };
+  }
+
+  const settings = loadSettings();
+  const outputDir = settings.outputDir;
+  const resultado = transcriptImport.importTranscript({
+    filePath,
+    outputDir,
+    name,
+    language: settings.language,
+  });
+  if (!resultado.ok) return resultado;
+
+  if (projectId) projects.assignMeeting(outputDir, resultado.id, projectId);
+
+  send('job:event', {
+    event: 'stage',
+    key: 'export',
+    progress: 100,
+    detail: `${resultado.segments} fala(s) importada(s)`,
+  });
+
+  const evento = {
+    event: 'done',
+    files: [resultado.transcriptPath],
+    segments: resultado.segments,
+    duration: resultado.duration,
+    elapsed: 0,
+    meetingId: resultado.id,
+  };
+  await finishJob(evento, outputDir, projectId, autoName);
+  return { ok: true, meetingId: evento.meetingId };
+}
+
+/**
+ * Fecha o ciclo da reunião: com projeto, as ações viram cards antes do aviso de
+ * pronto; sem projeto, não há onde pendurar tarefa e o aviso sai na hora.
+ */
+/**
+ * Renomeia a reunião e leva junto os vínculos.
+ *
+ * O id é o nome da pasta: renomear muda o id, e projeto e tarefas precisam
+ * acompanhar para não virarem órfãos.
+ */
+function renameMeetingEverywhere(dir, id, novoNome) {
+  const result = library.renameMeeting(dir, id, novoNome);
+  if (result.ok && result.id && result.id !== id) {
+    projects.renameMeeting(dir, id, result.id);
+    tasks.renameMeeting(dir, id, result.id);
+  }
+  return result;
+}
+
+async function finishJob(event, outputDir, projectId, autoName = false) {
+  const transcricao = event.files.find((f) => f.toLowerCase().endsWith('.md'));
+
+  // A leitura da transcrição serve às duas coisas: as ações combinadas e, se
+  // foi pedido, o nome da reunião. Uma passada só do modelo.
+  if (transcricao && (projectId || autoName)) {
+    send('job:event', { event: 'stage', key: 'extract', progress: 20, detail: 'lendo a transcrição' });
+    const { created, title, message } = await extractTasks({
+      meetingId: event.meetingId,
+      projectId,
+      transcriptPath: transcricao,
+      context: projectId ? projects.getProject(outputDir, projectId)?.context || '' : '',
+    });
+    event.tasksCreated = created;
+    if (message) send('job:log', `Extração: ${message}`);
+
+    if (autoName && title) {
+      const renomeada = renameMeetingEverywhere(outputDir, event.meetingId, title);
+      if (renomeada.ok && renomeada.id) {
+        event.meetingId = renomeada.id;
+        event.renamedTo = renomeada.id;
+        // Os caminhos antigos não existem mais depois do rename.
+        event.files = library.getMeeting(outputDir, renomeada.id)?.files.map((f) => f.path)
+          || event.files;
+      } else if (renomeada.message) {
+        send('job:log', `Nome sugerido não pôde ser aplicado: ${renomeada.message}`);
+      }
+    }
+  } else {
+    event.tasksCreated = 0;
+  }
+
+  send('job:event', event);
+
+  // Resumo e tarefas em PDF saem sozinhos. Fora do caminho do aviso de pronto:
+  // a transcrição já está na tela enquanto o Claude escreve os documentos.
+  if (event.meetingId) enqueueDocs(event.meetingId);
+}
+
+function extractTasks({ meetingId, projectId, transcriptPath, context }) {
+  return new Promise((resolve) => {
+    const jsonPath = extractionPathFor(transcriptPath);
+    try { fs.unlinkSync(jsonPath); } catch { /* não existia */ }
+
+    let prompt;
+    try {
+      prompt = buildExtractionPrompt({ transcriptPath, jsonPath, context });
+    } catch (err) {
+      resolve({ created: 0, message: err.message });
+      return;
+    }
+
+    const child = spawn(findClaude(), buildClaudeArgs(), {
+      cwd: path.dirname(transcriptPath),
+      windowsHide: true,
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+
+    currentExtraction = child;
+    let progresso = 45;
+
+    child.stdout.on('data', (chunk) => {
+      for (const line of chunk.toString().split('\n')) {
+        if (!line.trim().startsWith('{')) continue;
+        try {
+          const descricao = describeEvent(JSON.parse(line));
+          if (!descricao) continue;
+          progresso = Math.min(90, progresso + 8);
+          send('job:event', { event: 'stage', key: 'extract', progress: progresso, detail: descricao });
+        } catch { /* linha parcial do stream */ }
+      }
+    });
+
+    child.on('error', (err) => resolve({
+      created: 0,
+      message: `não foi possível executar o Claude Code (${err.code || err.message}).`,
+    }));
+
+    child.on('close', () => {
+      currentExtraction = null;
+      let dados = null;
+      try {
+        dados = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+      } catch {
+        resolve({ created: 0, message: 'A extração não devolveu um JSON legível.' });
+        return;
+      }
+      try { fs.unlinkSync(jsonPath); } catch { /* já apagado */ }
+
+      const { created } = tasks.createFromExtraction(loadSettings().outputDir, {
+        projectId,
+        meetingId,
+        items: Array.isArray(dados.tasks) ? dados.tasks : [],
+      });
+      resolve({ created, title: typeof dados.title === 'string' ? dados.title.trim() : '' });
+    });
+  });
+}
+
+function startRecordingJob({ projectId, name, audio, mimeType = 'audio/webm' }) {
+  if (currentJob) {
+    return { started: false, message: 'Já existe uma transcrição em andamento.' };
+  }
+  if (!audio || !audio.byteLength) {
+    return { started: false, message: 'A gravação saiu vazia. Confira o microfone e tente de novo.' };
+  }
+
+  const settings = loadSettings();
+  const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
+  const temporario = path.join(
+    app.getPath('temp'),
+    `synapse-gravacao-${Date.now()}.${ext}`,
+  );
+
+  try {
+    fs.writeFileSync(temporario, Buffer.from(audio));
+  } catch (err) {
+    return { started: false, message: `Não foi possível salvar a gravação: ${err.message}` };
+  }
+
+  return startJob({
+    videoPath: temporario,
+    name: name || 'Gravação',
+    projectId,
+    outputDir: settings.outputDir,
+    cleanup: temporario,
+  });
+}
+
 async function cancelJob() {
+  // A extração roda depois do pipeline: cancelar durante ela também vale.
+  if (currentExtraction) {
+    currentExtraction.kill();
+    currentExtraction = null;
+    send('job:event', { event: 'canceled' });
+    return { canceled: true };
+  }
   if (!currentJob) return { canceled: false };
   currentJob.canceled = true;
 
@@ -308,108 +568,156 @@ async function cancelJob() {
 // --- Documentos gerados pelo Claude ----------------------------------------
 
 /**
- * Gera tarefas ou resumo executivo em PDF a partir de uma transcrição.
+ * Gera um documento (resumo ou tarefas) a partir da transcrição.
  *
- * Roda `claude -p` em modo headless na pasta da transcrição e acompanha o
- * stream de eventos para a janela mostrar o que está acontecendo.
+ * Resolve quando o PDF existe no disco — o veredito é o arquivo, não o que o
+ * modelo disse ter feito.
  */
-function startDocJob({ kind, transcriptPath, context = '' }) {
-  if (currentDocJob) {
-    return { started: false, message: 'Já existe um documento sendo gerado.' };
+function runDocJob({ kind, transcriptPath, context = '' }) {
+  return new Promise((resolve) => {
+    const browser = findBrowser();
+    if (!browser) {
+      resolve({ kind, ok: false, message: 'Nenhum navegador encontrado para gerar o PDF (Edge ou Chrome).' });
+      return;
+    }
+
+    const pdfPath = pdfPathFor(kind, transcriptPath);
+    let prompt;
+    try {
+      prompt = buildPrompt(kind, { transcriptPath, pdfPath, browser, context });
+    } catch (err) {
+      resolve({ kind, ok: false, message: err.message });
+      return;
+    }
+
+    const child = spawn(findClaude(), buildClaudeArgs(), {
+      cwd: path.dirname(transcriptPath),
+      windowsHide: true,
+    });
+    // O prompt vai por stdin: como argumento, o shell do Windows o corrompe.
+    child.stdin.write(prompt);
+    child.stdin.end();
+
+    currentDocJob = { child, kind, pdfPath, canceled: currentDocJob?.canceled || false };
+
+    let buffer = '';
+    let lastMessage = '';
+
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('{')) continue;
+        try {
+          const event = JSON.parse(trimmed);
+          const description = describeEvent(event);
+          if (description) send('doc:progress', { kind, description });
+          if (event.type === 'result') lastMessage = event.result || lastMessage;
+        } catch {
+          // Linha fora do formato: ignora em vez de derrubar a geração.
+        }
+      }
+    });
+
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString().trim();
+      if (text) lastMessage = text.split('\n').filter(Boolean).pop() || lastMessage;
+    });
+
+    child.on('error', (err) => {
+      resolve({ kind, ok: false, message: `Falha ao executar o Claude: ${err.message}` });
+    });
+
+    child.on('close', () => {
+      const canceled = currentDocJob?.canceled;
+      const ok = !canceled && fs.existsSync(pdfPath) && fs.statSync(pdfPath).size > 0;
+      resolve({
+        kind,
+        ok,
+        canceled,
+        pdfPath: ok ? pdfPath : null,
+        message: ok ? lastMessage : `${canceled ? 'Geração cancelada.' : 'O PDF não foi gerado.'} ${lastMessage}`.trim(),
+      });
+    });
+  });
+}
+
+/**
+ * Gera os documentos da reunião.
+ *
+ * Resumo e tarefas saem da mesma leitura e sempre foram pedidos juntos: são um
+ * botão só. A ordem importa — o resumo primeiro, porque é o que a pessoa abre
+ * enquanto o outro ainda está sendo escrito.
+ */
+/**
+ * Fila de documentos.
+ *
+ * A geração acontece sozinha ao fim de cada reunião, e duas importações
+ * seguidas chegariam juntas aqui. Em vez de recusar a segunda, ela espera a
+ * vez — o Claude só roda um de cada vez.
+ */
+const docQueue = [];
+
+function enqueueDocs(meetingId) {
+  if (docQueue.includes(meetingId)) return { started: true, queued: true };
+  docQueue.push(meetingId);
+  if (docQueue.length === 1) runDocQueue();
+  return { started: true, queued: docQueue.length > 1 };
+}
+
+async function runDocQueue() {
+  while (docQueue.length) {
+    await generateDocs({ meetingId: docQueue[0] });
+    docQueue.shift();
   }
-  if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+}
+
+async function generateDocs({ meetingId }) {
+  const dir = outDir();
+  const meeting = library.getMeeting(dir, meetingId);
+  if (!meeting || !meeting.transcript) {
     return { started: false, message: 'Transcrição não encontrada.' };
   }
 
-  const browser = findBrowser();
-  if (!browser) {
-    return {
-      started: false,
-      message: 'Nenhum navegador encontrado para gerar o PDF (Edge ou Chrome).',
-    };
+  const context = meeting.project?.context || '';
+  currentDocJob = { child: null, kind: 'resumo', canceled: false };
+  send('doc:progress', { kind: 'resumo', description: 'lendo a transcrição' });
+
+  const resultados = [];
+  for (const kind of ['resumo', 'tarefas']) {
+    if (currentDocJob?.canceled) break;
+    resultados.push(await runDocJob({ kind, transcriptPath: meeting.transcript, context }));
   }
 
-  const pdfPath = pdfPathFor(kind, transcriptPath);
-  let prompt;
-  try {
-    prompt = buildPrompt(kind, { transcriptPath, pdfPath, browser, context });
-  } catch (err) {
-    return { started: false, message: err.message };
-  }
-
-  const child = spawn('claude', buildClaudeArgs(), {
-    cwd: path.dirname(transcriptPath),
-    windowsHide: true,
+  const canceled = Boolean(currentDocJob?.canceled);
+  currentDocJob = null;
+  const gerados = resultados.filter((r) => r.ok);
+  send('doc:done', {
+    meetingId,
+    ok: gerados.length > 0,
+    canceled,
+    kinds: gerados.map((r) => r.kind),
+    message: gerados.length === resultados.length
+      ? ''
+      : (resultados.find((r) => !r.ok)?.message || ''),
   });
-  // O prompt vai por stdin: como argumento, o shell do Windows o corrompe.
-  child.stdin.write(prompt);
-  child.stdin.end();
-
-  currentDocJob = { child, kind, pdfPath, canceled: false };
-
-  let buffer = '';
-  let lastMessage = '';
-
-  child.stdout.on('data', (chunk) => {
-    buffer += chunk.toString();
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('{')) continue;
-      try {
-        const event = JSON.parse(trimmed);
-        const description = describeEvent(event);
-        if (description) send('doc:progress', { kind, description });
-        if (event.type === 'result') lastMessage = event.result || lastMessage;
-      } catch {
-        // Linha fora do formato: ignora em vez de derrubar a geração.
-      }
-    }
-  });
-
-  child.stderr.on('data', (chunk) => {
-    const text = chunk.toString().trim();
-    if (text) lastMessage = text.split('\n').filter(Boolean).pop() || lastMessage;
-  });
-
-  child.on('error', (err) => {
-    currentDocJob = null;
-    send('doc:done', { kind, ok: false, message: `Falha ao executar o Claude: ${err.message}` });
-  });
-
-  child.on('close', () => {
-    const canceled = currentDocJob?.canceled;
-    currentDocJob = null;
-    if (canceled) {
-      send('doc:done', { kind, ok: false, canceled: true, message: 'Geração cancelada.' });
-      return;
-    }
-    // O veredito é o arquivo existir — não o que o modelo disse ter feito.
-    const ok = fs.existsSync(pdfPath) && fs.statSync(pdfPath).size > 0;
-    send('doc:done', {
-      kind,
-      ok,
-      pdfPath: ok ? pdfPath : null,
-      message: ok ? lastMessage : `O PDF não foi gerado. ${lastMessage}`.trim(),
-    });
-  });
-
-  return { started: true, pdfPath };
+  return { started: true };
 }
 
 function cancelDocJob() {
   if (!currentDocJob) return { canceled: false };
   currentDocJob.canceled = true;
+  const child = currentDocJob.child;
+  if (!child) return { canceled: true };
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(currentDocJob.child.pid), '/t', '/f'], { windowsHide: true });
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true });
   } else {
-    currentDocJob.child.kill();
+    child.kill();
   }
   return { canceled: true };
 }
-
-// --- Build da imagem --------------------------------------------------------
 
 function buildImage() {
   return new Promise((resolve) => {
@@ -430,39 +738,76 @@ function buildImage() {
 
 // --- IPC --------------------------------------------------------------------
 
+const outDir = () => loadSettings().outputDir;
+
+// Configurações e motores.
 ipcMain.handle('settings:get', () => loadSettings());
 ipcMain.handle('settings:set', (_e, patch) => saveSettings(patch));
 ipcMain.handle('engines:status', () => enginesStatus());
 ipcMain.handle('docker:status', () => dockerStatus());
 ipcMain.handle('docker:build', () => buildImage());
-ipcMain.handle('job:start', (_e, payload) => startJob(payload));
-ipcMain.handle('job:cancel', () => cancelJob());
 
-ipcMain.handle('doc:start', (_e, payload) => startDocJob(payload));
+// Projetos — o grupo do disco visto como projeto do workspace.
+ipcMain.handle('projects:list', () => workspace.listProjects(outDir()));
+ipcMain.handle('projects:save', (_e, project) => projects.saveProject(outDir(), project));
+ipcMain.handle('projects:delete', (_e, projectId) => {
+  const dir = outDir();
+  // As tarefas do projeto vão junto — a cascata do banco cuida disso — e as
+  // reuniões apenas ficam sem projeto.
+  return projects.deleteProject(dir, projectId);
+});
+
+// Reuniões (a pasta de saída é a fonte da verdade).
+ipcMain.handle('meetings:list', (_e, projectId) => workspace.listMeetings(outDir(), projectId));
+ipcMain.handle('meetings:get', (_e, id) => workspace.getMeeting(outDir(), id));
+ipcMain.handle('meetings:rename', (_e, { id, name }) =>
+  renameMeetingEverywhere(outDir(), id, name));
+ipcMain.handle('meetings:delete', async (_e, { id, files }) => {
+  const dir = outDir();
+  // Vai para a Lixeira, não para o vazio: um clique errado dá para desfazer.
+  const result = await library.deleteMeeting(dir, id, files, async (meeting) => {
+    await shell.trashItem(meeting.dir);
+    return { ok: true, deleted: meeting.files.length, trashed: true };
+  });
+  if (result.ok) {
+    projects.forgetMeeting(dir, id);
+    tasks.forgetMeeting(dir, id);
+  }
+  return result;
+});
+ipcMain.handle('meetings:assign', (_e, { meetingId, projectId }) =>
+  projects.assignMeeting(outDir(), meetingId, projectId));
+ipcMain.handle('meetings:read', (_e, filePath) => library.readText(filePath));
+
+// Tarefas do Kanban.
+ipcMain.handle('tasks:list', (_e, projectId) => workspace.listTasks(outDir(), projectId));
+ipcMain.handle('tasks:save', (_e, task) => tasks.saveTask(outDir(), task));
+ipcMain.handle('tasks:move', (_e, { id, status }) => tasks.moveTask(outDir(), id, status));
+ipcMain.handle('tasks:delete', (_e, id) => tasks.deleteTask(outDir(), id));
+
+// Pipeline.
+ipcMain.handle('job:start', (_e, payload) => startJob(payload));
+ipcMain.handle('job:recording', (_e, payload) => startRecordingJob(payload));
+ipcMain.handle('job:cancel', () => cancelJob());
+ipcMain.handle('transcript:import', (_e, payload) => importTranscriptJob(payload));
+
+// Documentos: o front manda o id da reunião; aqui viram caminho e contexto.
+ipcMain.handle('doc:generate', (_e, { meetingId }) => enqueueDocs(meetingId));
 ipcMain.handle('doc:cancel', () => cancelDocJob());
 
-// Biblioteca de transcrições (a pasta de saída é a fonte da verdade).
-ipcMain.handle('library:list', () => library.listMeetings(loadSettings().outputDir));
-ipcMain.handle('library:get', (_e, id) => {
-  const meeting = library.getMeeting(loadSettings().outputDir, id);
-  return meeting ? { ...meeting, preview: library.preview(meeting.transcript) } : null;
+// Chat por projeto — o RAG entra no M3 (embeddings + Vector DB).
+ipcMain.handle('chat:ask', (_e, { projectId }) => {
+  const reunioes = workspace.listMeetings(outDir(), projectId).length;
+  return {
+    answer: reunioes
+      ? `O chat ainda não está ligado à memória do projeto. Este projeto tem ${reunioes} reunião(ões) transcrita(s) prontas para indexar — a busca semântica entra no próximo módulo.`
+      : 'Este projeto ainda não tem reuniões. Grave ou importe uma para eu ter o que ler.',
+    sources: [],
+  };
 });
-ipcMain.handle('library:rename', (_e, { id, name }) =>
-  library.renameMeeting(loadSettings().outputDir, id, name));
-ipcMain.handle('library:delete', (_e, { id, files }) =>
-  library.deleteMeeting(loadSettings().outputDir, id, files));
-ipcMain.handle('library:read', (_e, filePath) => library.readText(filePath));
-
-// Grupos (projetos) e seus contextos.
-ipcMain.handle('groups:list', () => groups.listGroups(loadSettings().outputDir));
-ipcMain.handle('groups:save', (_e, group) => groups.saveGroup(loadSettings().outputDir, group));
-ipcMain.handle('groups:delete', (_e, groupId) =>
-  groups.deleteGroup(loadSettings().outputDir, groupId));
-ipcMain.handle('groups:assign', (_e, { meetingId, groupId }) =>
-  groups.assignMeeting(loadSettings().outputDir, meetingId, groupId));
 
 /** Salva uma cópia de um arquivo da reunião onde o usuário escolher. */
-ipcMain.handle('library:download', async (_e, filePath) => {
+ipcMain.handle('meetings:download', async (_e, filePath) => {
   if (!filePath || !fs.existsSync(filePath)) {
     return { ok: false, message: 'Arquivo não encontrado.' };
   }
@@ -491,6 +836,16 @@ ipcMain.handle('dialog:pickOutputDir', async () => {
   return saveSettings({ outputDir: result.filePaths[0] }).outputDir;
 });
 
+ipcMain.handle('dialog:pickTranscript', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Escolher transcrição',
+    properties: ['openFile'],
+    filters: [{ name: 'Transcrição e legenda', extensions: transcriptImport.EXTENSIONS }],
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  return result.filePaths[0];
+});
+
 ipcMain.handle('dialog:pickVideo', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Escolher vídeo',
@@ -510,11 +865,14 @@ ipcMain.handle('shell:openPath', (_e, filePath) => shell.openPath(filePath));
 // --- Ciclo de vida ----------------------------------------------------------
 
 app.whenReady().then(() => {
+  enableSystemAudioCapture();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+app.on('will-quit', () => db.closeAll());
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

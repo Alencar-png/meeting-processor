@@ -5,7 +5,6 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'" />
   <title>Synapse</title>
-  <link rel="icon" href="../assets/icon.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -27,9 +26,7 @@
           <span>Projetos</span>
           <button class="nav-add" id="nav-new-project" type="button" title="Novo projeto">+</button>
         </div>
-        <button class="nav-item" id="nav-projects-all" data-nav="projects" type="button">
-          <span class="nav-glyph" aria-hidden="true">▦</span> Todos os projetos
-        </button>
+        <div id="nav-projects"></div>
 
         <div class="nav-section"><span>Biblioteca</span></div>
         <button class="nav-item" id="nav-library" data-nav="library" type="button">
@@ -42,6 +39,10 @@
         </button>
       </nav>
 
+      <button class="engine" id="engine" type="button" data-ok="false" title="Estado do motor — abrir configurações">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="engine-text">verificando…</span>
+      </button>
     </aside>
 
     <!-- ===== Área principal ===== -->
@@ -49,6 +50,7 @@
       <header class="topbar">
         <p class="crumb" id="crumb">Início</p>
         <div class="topbar-actions">
+          <button class="btn ghost" id="top-import" type="button">Importar vídeo</button>
           <button class="btn solid" id="top-record" type="button" hidden>● Iniciar reunião</button>
         </div>
       </header>
@@ -62,9 +64,8 @@
             <p>Grave ou importe uma reunião. O Synapse transcreve, resume,
                extrai tarefas e conecta tudo por projeto.</p>
             <div class="hero-actions">
-              <button class="btn solid" id="home-record" type="button">● Iniciar gravação</button>
+              <button class="btn solid" id="home-new-project" type="button">Criar projeto</button>
               <button class="btn ghost" id="home-import" type="button">Importar vídeo</button>
-              <button class="btn ghost" id="home-import-text" type="button">Importar transcrição</button>
             </div>
           </div>
         </div>
@@ -79,47 +80,6 @@
             <div class="tile-list" id="home-recent"></div>
           </div>
         </div>
-      </section>
-
-      <!-- ---- Projetos (módulo) ---- -->
-      <section class="view view-projects">
-        <header class="mod-head">
-          <div>
-            <h1>Projetos</h1>
-            <p class="mod-sub" id="projects-sub"></p>
-          </div>
-          <div class="mod-tools">
-            <div class="viewswitch" role="group" aria-label="Forma de visualização">
-              <button class="vs" id="vs-grid" type="button" data-mode="grid"
-                      aria-pressed="true">Blocos</button>
-              <button class="vs" id="vs-table" type="button" data-mode="table"
-                      aria-pressed="false">Tabela</button>
-            </div>
-            <button class="btn solid" id="projects-new" type="button">Novo projeto</button>
-          </div>
-        </header>
-
-        <div class="proj-grid" id="projects-grid"></div>
-
-        <div class="table-wrap" id="projects-table-wrap" hidden>
-          <table class="datatable" id="projects-table">
-            <thead>
-              <tr>
-                <th data-sort="name">Projeto</th>
-                <th data-sort="meetings" class="num-col">Reuniões</th>
-                <th data-sort="openTasks" class="num-col">Tarefas abertas</th>
-                <th data-sort="lastMeetingAt">Última reunião</th>
-                <th>Contexto</th>
-                <th class="acts-col"></th>
-              </tr>
-            </thead>
-            <tbody id="projects-tbody"></tbody>
-          </table>
-        </div>
-
-        <p class="empty" id="projects-empty" hidden>
-          Nenhum projeto ainda. Crie o primeiro para reunir reuniões, tarefas e documentos.
-        </p>
       </section>
 
       <!-- ---- Projeto ---- -->
@@ -189,7 +149,7 @@
           <div class="chat">
             <div class="chat-thread" id="chat-thread"></div>
             <form class="chat-bar" id="chat-form">
-              <input class="input chat-input" id="chat-input" type="text" autocomplete="off"
+              <input class="chat-input" id="chat-input" type="text" autocomplete="off"
                      placeholder="Pergunte sobre as reuniões e tarefas deste projeto…" />
               <button class="btn solid" type="submit">Enviar</button>
             </form>
@@ -274,7 +234,8 @@
       </header>
       <dl class="meta" id="drawer-meta"></dl>
       <div class="drawer-actions">
-        <button class="btn ghost" id="drawer-docs" type="button" hidden>Gerar documentos</button>
+        <button class="btn solid" id="drawer-resumo" type="button">Gerar resumo</button>
+        <button class="btn solid" id="drawer-tarefas" type="button">Gerar tarefas</button>
         <button class="btn ghost" id="drawer-rename" type="button">Renomear</button>
         <button class="btn ghost danger" id="drawer-delete" type="button">Excluir</button>
       </div>
@@ -357,44 +318,21 @@
         <label class="field"><span>Projeto</span>
           <select class="input" id="mc-project"><option value="">sem projeto</option></select>
         </label>
-        <label class="check">
-          <input type="checkbox" id="mc-auto" />
-          <span>
-            <strong>Deixar a IA nomear pelo conteúdo</strong>
-            <em>a reunião entra com o nome acima e é renomeada quando a transcrição fica pronta</em>
-          </span>
-        </label>
         <p class="err" id="mc-error"></p>
         <div class="modal-actions">
           <span class="spacer"></span>
           <button class="btn ghost" id="mc-cancel" type="button">Cancelar</button>
-          <button class="btn solid" id="mc-submit" type="submit">Transcrever</button>
+          <button class="btn solid" type="submit">Transcrever</button>
         </div>
       </form>
     </div>
 
-    <div class="modal modal-sm" id="modal-danger" hidden>
-      <h2 id="md-title">Excluir</h2>
-      <p class="modal-sub" id="md-message"></p>
-      <div class="modal-actions">
-        <span class="spacer"></span>
-        <button class="btn ghost" id="md-cancel" type="button">Cancelar</button>
-        <button class="btn danger-solid" id="md-confirm" type="button">Excluir</button>
-      </div>
-    </div>
-
     <!-- ===== Overlays: gravação e processamento ===== -->
     <div class="overlay" id="overlay-record" hidden>
-      <canvas class="overlay-net is-live" id="record-net"
-              aria-label="Rede em atividade — arraste e clique para brincar"></canvas>
-      <p class="overlay-kicker">gravando para</p>
-      <label class="overlay-field">
-        <span class="sr-only">Projeto da gravação</span>
-        <select class="input" id="record-project"></select>
-      </label>
+      <canvas class="overlay-net" id="record-net" aria-hidden="true"></canvas>
+      <p class="overlay-kicker" id="record-project">projeto</p>
       <h1 class="overlay-title">Gravando reunião</h1>
       <p class="overlay-clock" id="record-clock">00:00</p>
-      <p class="overlay-hint" id="record-fonte">microfone</p>
       <div class="overlay-actions">
         <button class="btn ghost" id="record-cancel" type="button">Descartar</button>
         <button class="btn solid" id="record-stop" type="button">⏹ Finalizar reunião</button>
@@ -402,21 +340,24 @@
     </div>
 
     <div class="overlay" id="overlay-process" hidden>
-      <canvas class="overlay-net is-live" id="process-net"
-              aria-label="Rede em atividade — arraste e clique para brincar"></canvas>
+      <canvas class="overlay-net" id="process-net" aria-hidden="true"></canvas>
+      <p class="overlay-kicker" id="process-file">arquivo</p>
       <h1 class="overlay-title" id="process-stage">Processando</h1>
       <p class="overlay-clock"><span class="pct" id="process-pct">0%</span></p>
+      <ol class="pipeline" id="pipeline">
+        <li data-step="audio">Extrair áudio</li>
+        <li data-step="transcription">Transcrever</li>
+        <li data-step="export">Gravar arquivos</li>
+        <li data-step="extract">Extrair resumo e tarefas</li>
+      </ol>
       <button class="btn ghost" id="process-cancel" type="button">Cancelar</button>
     </div>
-
-    <div class="popmenu" id="popmenu" role="menu" hidden></div>
 
     <div class="toast" id="toast" hidden></div>
   </div>
 
   <script src="mock-api.js"></script>
   <script src="neural.js"></script>
-  <script src="network.js"></script>
   <script src="graph.js"></script>
   <script src="app.js"></script>
 </body>

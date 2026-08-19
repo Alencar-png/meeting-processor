@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!--
+    Synapse — marca do aplicativo.
+
+    Um nó que dispara: o corpo acende em ciano no centro e o sinal sai por três
+    axônios até terminais em volta. É a rede que o app desenha — fala virando
+    conhecimento ligado.
+
+    Os terminais ficam em direções afastadas (nordeste, sudeste, oeste) para a
+    silhueta ler como constelação, não como bicho. Desenhado para sobreviver a
+    16px: quatro formas cheias, traço grosso, contraste alto.
+  -->
+  <defs>
+    <linearGradient id="fundo" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111a30"/>
+      <stop offset="55%" stop-color="#0a1020"/>
+      <stop offset="100%" stop-color="#05070f"/>
+    </linearGradient>
+
+    <linearGradient id="sinal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#8beeff"/>
+      <stop offset="100%" stop-color="#3fc6f5"/>
+    </linearGradient>
+
+    <linearGradient id="axonio" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#53d5fd"/>
+      <stop offset="100%" stop-color="#9d8bfa"/>
+    </linearGradient>
+
+    <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#53d5fd" stop-opacity="0.5"/>
+      <stop offset="65%" stop-color="#53d5fd" stop-opacity="0.09"/>
+      <stop offset="100%" stop-color="#53d5fd" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#fundo)"/>
+  <rect x="3" y="3" width="506" height="506" rx="110" fill="none"
+        stroke="#263350" stroke-width="6"/>
+
+  <circle cx="256" cy="252" r="176" fill="url(#halo)"/>
+
+  <!-- Axônios: do corpo para os três terminais. -->
+  <g fill="none" stroke="url(#axonio)" stroke-width="24" stroke-linecap="round">
+    <path d="M256 252 C 316 218, 344 176, 372 138"/>
+    <path d="M256 252 C 314 292, 348 328, 374 372"/>
+    <path d="M256 252 C 200 268, 160 300, 126 322"/>
+  </g>
+
+  <!-- Terminais. -->
+  <circle cx="372" cy="138" r="38" fill="#53d5fd"/>
+  <circle cx="374" cy="372" r="42" fill="#9d8bfa"/>
+  <circle cx="126" cy="322" r="34" fill="#9d8bfa"/>
+
+  <!-- Corpo: o ponto que dispara. -->
+  <circle cx="256" cy="252" r="84" fill="url(#sinal)"/>
+  <circle cx="230" cy="226" r="24" fill="#ffffff" opacity="0.7"/>
+</svg>

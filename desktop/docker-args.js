@@ -42,6 +42,11 @@ function buildDockerArgs({
  * o nome da reunião, e só o nome do arquivo não bastaria para achá-la.
  */
 function toHostPath(containerPath, outputDir) {
+  // O motor nativo já emite caminhos do host: reconstruí-los duplicaria a
+  // pasta de saída e os arquivos deixariam de ser encontrados.
+  if (path.isAbsolute(containerPath) && !containerPath.startsWith('/output')) {
+    return containerPath;
+  }
   const relative = containerPath.replace(/^\/?output\/?/, '');
   return path.join(outputDir, ...relative.split('/').filter(Boolean));
 }

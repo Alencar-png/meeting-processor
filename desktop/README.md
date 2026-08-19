@@ -101,12 +101,13 @@ Resumo e tarefas em PDF continuam sob demanda, no painel da reunião.
 
 ## Onde ficam os dados
 
-A pasta de saída é a fonte da verdade — não há banco paralelo:
+As transcrições e os documentos são arquivos na pasta de saída, legíveis sem
+o app. O que não cabe num nome de pasta — projetos, tarefas e o vínculo de
+cada reunião — fica num SQLite na mesma pasta:
 
 ```
 <pasta de saída>/
-├── groups.json                    # projetos e a que projeto cada reunião pertence
-├── tasks.json                     # tarefas do kanban
+├── synapse.db                     # projetos, tarefas e vínculos (SQLite)
 └── <nome da reunião>/
     ├── <nome>.md                  # transcrição com timestamps
     ├── <nome>.txt
@@ -128,8 +129,9 @@ desktop/
 ├── claude-jobs.js       # prompts e execução do `claude -p`
 ├── transcript-import.js # texto e legenda viram reunião (.txt .md .srt .vtt)
 ├── library.js           # a pasta de saída lida como biblioteca (CRUD)
-├── groups.js            # projetos e seus contextos (groups.json)
-├── tasks.js             # tarefas do kanban (tasks.json)
+├── db.js                # banco do workspace (SQLite) e migração dos JSONs
+├── projects.js          # projetos, contextos e vínculo com as reuniões
+├── tasks.js             # tarefas do kanban
 ├── workspace.js         # traduz disco → projeto/reunião/tarefa
 ├── preload.js           # ponte segura entre janela e sistema
 ├── prompts/             # instruções editáveis
@@ -150,6 +152,9 @@ desktop/
 
 > Excluir uma reunião manda a pasta para a **Lixeira** do sistema, não apaga
 > do disco: transcrição não se refaz sem o vídeo original.
+>
+> Vindo de uma versão anterior, o `groups.json` e o `tasks.json` são
+> importados para o banco na primeira abertura e guardados como `.migrado`.
 
 | Sintoma | O que fazer |
 |---------|-------------|

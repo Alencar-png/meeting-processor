@@ -4,8 +4,8 @@
  * Tradução entre o disco e o vocabulário do Synapse.
  *
  * O front fala de projeto, reunião e tarefa. No disco existem: a pasta de
- * saída (`library.js`), o `groups.json` (`groups.js`) e o `tasks.json`
- * (`tasks.js`). Este módulo é a única camada que sabe converter um no outro,
+ * saída (`library.js`) e o banco do workspace (`projects.js` e `tasks.js`).
+ * Este módulo é a única camada que sabe converter um no outro,
  * para o main.js só registrar handlers e o renderer não conhecer o formato
  * dos arquivos.
  */
@@ -13,7 +13,7 @@
 const path = require('node:path');
 
 const library = require('./library');
-const groups = require('./groups');
+const projects = require('./projects');
 const tasks = require('./tasks');
 
 /**
@@ -64,12 +64,12 @@ function listProjects(dir) {
   const contagem = {};
   const ultima = {};
   for (const m of reunioes) {
-    if (!m.group) continue;
-    contagem[m.group.id] = (contagem[m.group.id] || 0) + 1;
+    if (!m.project) continue;
+    contagem[m.project.id] = (contagem[m.project.id] || 0) + 1;
     // A data mais recente é o sinal de projeto vivo na listagem.
-    ultima[m.group.id] = Math.max(ultima[m.group.id] || 0, recordedAt(m));
+    ultima[m.project.id] = Math.max(ultima[m.project.id] || 0, recordedAt(m));
   }
-  return groups.listGroups(dir).map((g) => ({
+  return projects.listProjects(dir).map((g) => ({
     id: g.id,
     name: g.name,
     context: g.context || '',
@@ -83,8 +83,8 @@ function listMeetings(dir, projectId) {
   if (!dir) return [];
   return library
     .listMeetings(dir)
-    .filter((m) => !projectId || m.group?.id === projectId)
-    .map((m) => toMeeting(m, m.group));
+    .filter((m) => !projectId || m.project?.id === projectId)
+    .map((m) => toMeeting(m, m.project));
 }
 
 /**
@@ -94,7 +94,7 @@ function listMeetings(dir, projectId) {
 function getMeeting(dir, id) {
   const bruta = library.getMeeting(dir, id);
   if (!bruta) return null;
-  const meeting = toMeeting(bruta, bruta.group);
+  const meeting = toMeeting(bruta, bruta.project);
   meeting.transcript = bruta.transcript ? library.readText(bruta.transcript).text || '' : '';
   return meeting;
 }
@@ -133,7 +133,7 @@ function overview(dir) {
   const reunioes = listMeetings(dir);
   const abertas = tasks.openCountByProject(dir);
   return {
-    projects: groups.listGroups(dir).length,
+    projects: projects.listProjects(dir).length,
     meetings: reunioes.length,
     openTasks: Object.values(abertas).reduce((soma, n) => soma + n, 0),
     transcribedSeconds: reunioes.reduce((soma, m) => soma + m.duration, 0),

@@ -12,7 +12,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const groups = require('./groups');
+const projects = require('./projects');
 
 const TRANSCRIPT_EXTENSIONS = ['.md', '.txt'];
 const DOCUMENT_EXTENSIONS = ['.pdf'];
@@ -144,10 +144,10 @@ function listMeetings(dir) {
   const folders = readFolders(dir);
   const taken = new Set(folders.map((m) => m.id));
   const loose = readLooseFiles(dir).filter((m) => !taken.has(m.id));
-  const porReuniao = groups.groupsByMeeting(dir);
+  const porReuniao = projects.projectsByMeeting(dir);
 
   return [...folders, ...loose]
-    .map((m) => ({ ...m, group: porReuniao[m.id] || null }))
+    .map((m) => ({ ...m, project: porReuniao[m.id] || null }))
     .sort((a, b) => b.modified - a.modified);
 }
 
@@ -227,7 +227,7 @@ function renameMeeting(dir, id, newName) {
       return { ok: false, message: `Já existe um arquivo chamado ${path.basename(conflict.to)}.` };
     }
     const result = renameFiles(moves);
-    if (result.ok) groups.renameMeeting(dir, meeting.id, clean);
+    if (result.ok) projects.renameMeeting(dir, meeting.id, clean);
     return result.ok ? { ok: true, id: clean } : result;
   }
 
@@ -254,7 +254,7 @@ function renameMeeting(dir, id, newName) {
 
   // O vínculo com o grupo acompanha o novo nome; sem isso a reunião sairia
   // silenciosamente do projeto ao ser renomeada.
-  groups.renameMeeting(dir, meeting.id, clean);
+  projects.renameMeeting(dir, meeting.id, clean);
   return { ok: true, id: clean };
 }
 
@@ -275,7 +275,7 @@ function deleteMeeting(dir, id, files = null, trash = null) {
     try {
       if (trash) return trash(meeting);
       fs.rmSync(meeting.dir, { recursive: true, force: true });
-      groups.forgetMeeting(dir, meeting.id);
+      projects.forgetMeeting(dir, meeting.id);
       return { ok: true, deleted: meeting.files.length };
     } catch (err) {
       return { ok: false, message: `Não foi possível excluir: ${err.message}` };
@@ -298,7 +298,7 @@ function deleteMeeting(dir, id, files = null, trash = null) {
   if (failed.length) {
     return { ok: false, message: `Não foi possível excluir: ${failed.join(', ')}` };
   }
-  if (!files) groups.forgetMeeting(dir, meeting.id);
+  if (!files) projects.forgetMeeting(dir, meeting.id);
   return { ok: true, deleted: targets.length };
 }
 

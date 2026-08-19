@@ -34,7 +34,8 @@ const {
   pdfPathFor,
 } = require('./claude-jobs');
 const library = require('./library');
-const groups = require('./groups');
+const db = require('./db');
+const projects = require('./projects');
 const tasks = require('./tasks');
 const workspace = require('./workspace');
 const transcriptImport = require('./transcript-import');
@@ -285,7 +286,7 @@ function startJob(payload) {
           event.meetingId = workspace.meetingIdFromFiles(outputDir, event.files);
           const projectId = currentJob?.projectId;
           if (event.meetingId && projectId) {
-            groups.assignMeeting(outputDir, event.meetingId, projectId);
+            projects.assignMeeting(outputDir, event.meetingId, projectId);
           }
           finishJob(event, outputDir, projectId, currentJob?.autoName);
           continue;   // o done é anunciado depois da extração
@@ -371,7 +372,7 @@ async function importTranscriptJob({ filePath, name, projectId, autoName = false
   });
   if (!resultado.ok) return resultado;
 
-  if (projectId) groups.assignMeeting(outputDir, resultado.id, projectId);
+  if (projectId) projects.assignMeeting(outputDir, resultado.id, projectId);
 
   send('job:event', {
     event: 'stage',
@@ -405,7 +406,7 @@ async function importTranscriptJob({ filePath, name, projectId, autoName = false
 function renameMeetingEverywhere(dir, id, novoNome) {
   const result = library.renameMeeting(dir, id, novoNome);
   if (result.ok && result.id && result.id !== id) {
-    groups.renameMeeting(dir, id, result.id);
+    projects.renameMeeting(dir, id, result.id);
     tasks.renameMeeting(dir, id, result.id);
   }
   return result;
@@ -422,7 +423,7 @@ async function finishJob(event, outputDir, projectId, autoName = false) {
       meetingId: event.meetingId,
       projectId,
       transcriptPath: transcricao,
-      context: projectId ? groups.getGroup(outputDir, projectId)?.context || '' : '',
+      context: projectId ? projects.getProject(outputDir, projectId)?.context || '' : '',
     });
     event.tasksCreated = created;
     if (message) send('job:log', `Extração: ${message}`);
@@ -657,7 +658,7 @@ async function generateDocs({ meetingId }) {
     return { started: false, message: 'Transcrição não encontrada.' };
   }
 
-  const context = meeting.group?.context || '';
+  const context = meeting.project?.context || '';
   currentDocJob = { child: null, kind: 'resumo', canceled: false };
 
   (async () => {
@@ -726,10 +727,10 @@ ipcMain.handle('docker:build', () => buildImage());
 
 // Projetos — o grupo do disco visto como projeto do workspace.
 ipcMain.handle('projects:list', () => workspace.listProjects(outDir()));
-ipcMain.handle('projects:save', (_e, project) => groups.saveGroup(outDir(), project));
+ipcMain.handle('projects:save', (_e, project) => projects.saveProject(outDir(), project));
 ipcMain.handle('projects:delete', (_e, projectId) => {
   const dir = outDir();
-  const result = groups.deleteGroup(dir, projectId);
+  const result = projects.deleteProject(dir, projectId);
   // As tarefas do projeto vão junto: sem projeto elas não teriam onde viver.
   if (result.ok) tasks.forgetProject(dir, projectId);
   return result;
@@ -748,13 +749,13 @@ ipcMain.handle('meetings:delete', async (_e, { id, files }) => {
     return { ok: true, deleted: meeting.files.length, trashed: true };
   });
   if (result.ok) {
-    groups.forgetMeeting(dir, id);
+    projects.forgetMeeting(dir, id);
     tasks.forgetMeeting(dir, id);
   }
   return result;
 });
 ipcMain.handle('meetings:assign', (_e, { meetingId, projectId }) =>
-  groups.assignMeeting(outDir(), meetingId, projectId));
+  projects.assignMeeting(outDir(), meetingId, projectId));
 ipcMain.handle('meetings:read', (_e, filePath) => library.readText(filePath));
 
 // Tarefas do Kanban.
@@ -849,6 +850,8 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+app.on('will-quit', () => db.closeAll());
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

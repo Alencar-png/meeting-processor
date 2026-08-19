@@ -1,0 +1,158 @@
+'use strict';
+
+/**
+ * Projetos e o vínculo das reuniões com eles.
+ *
+ * Um projeto reúne reuniões do mesmo assunto e carrega um texto de contexto —
+ * o que é o projeto, quem são as pessoas, que tipo de documento se espera.
+ * Esse contexto vai para o prompt na hora de gerar tarefas ou resumo, para o
+ * documento sair no registro certo.
+ *
+ * Antes chamado `groups.js`, com os dados num `groups.json`. O nome mudou
+ * junto com o modelo do produto, e o armazenamento passou para o SQLite.
+ */
+
+const db = require('./db');
+
+// Caracteres proibidos em nome de arquivo — o nome do projeto aparece na UI e
+// pode virar nome de pasta no futuro; manter a mesma regra evita surpresa.
+const INVALID_CHARS = /[<>:"/\\|?*]/;
+
+/** Projetos com a contagem de reuniões de cada um. */
+function listProjects(dir) {
+  const conn = db.open(dir);
+  if (!conn) return [];
+  return conn.prepare(`
+    SELECT p.id, p.name, p.context,
+           (SELECT COUNT(*) FROM meetings m WHERE m.project_id = p.id) AS count
+      FROM projects p
+     ORDER BY p.name COLLATE NOCASE
+  `).all();
+}
+
+function getProject(dir, projectId) {
+  const conn = db.open(dir);
+  if (!conn || !projectId) return null;
+  return conn.prepare('SELECT id, name, context FROM projects WHERE id = ?').get(projectId) || null;
+}
+
+/** Projeto de uma reunião, ou null. */
+function projectOf(dir, meetingId) {
+  const conn = db.open(dir);
+  if (!conn) return null;
+  return conn.prepare(`
+    SELECT p.id, p.name, p.context
+      FROM meetings m JOIN projects p ON p.id = m.project_id
+     WHERE m.id = ?
+  `).get(meetingId) || null;
+}
+
+/** Mapa meetingId → projeto, para montar a listagem numa leitura só. */
+function projectsByMeeting(dir) {
+  const conn = db.open(dir);
+  if (!conn) return {};
+  const linhas = conn.prepare(`
+    SELECT m.id AS meetingId, p.id, p.name, p.context
+      FROM meetings m JOIN projects p ON p.id = m.project_id
+  `).all();
+  const saida = {};
+  for (const l of linhas) {
+    saida[l.meetingId] = { id: l.id, name: l.name, context: l.context };
+  }
+  return saida;
+}
+
+function saveProject(dir, { id, name, context }) {
+  const conn = db.open(dir);
+  if (!conn) return { ok: false, message: 'Pasta de saída indisponível.' };
+
+  const nome = (name || '').trim();
+  if (!nome) return { ok: false, message: 'O projeto precisa de um nome.' };
+  if (INVALID_CHARS.test(nome)) {
+    return { ok: false, message: 'O nome não pode conter < > : " / \\ | ? *' };
+  }
+
+  const repetido = conn
+    .prepare('SELECT id FROM projects WHERE name = ? COLLATE NOCASE AND id <> ?')
+    .get(nome, id || '');
+  if (repetido) return { ok: false, message: `Já existe um projeto chamado ${nome}.` };
+
+  const texto = (context || '').trim();
+
+  if (id) {
+    const atual = conn.prepare('SELECT id FROM projects WHERE id = ?').get(id);
+    if (!atual) return { ok: false, message: 'Projeto não encontrado.' };
+    conn.prepare('UPDATE projects SET name = ?, context = ? WHERE id = ?').run(nome, texto, id);
+    return { ok: true, id };
+  }
+
+  // Id derivado do nome, com sufixo numérico se preciso: legível no banco.
+  const base = nome.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') || 'projeto';
+  let novoId = base;
+  let n = 2;
+  while (conn.prepare('SELECT 1 FROM projects WHERE id = ?').get(novoId)) novoId = `${base}-${n++}`;
+
+  conn.prepare('INSERT INTO projects (id, name, context, created_at) VALUES (?, ?, ?, ?)')
+    .run(novoId, nome, texto, Date.now());
+  return { ok: true, id: novoId };
+}
+
+/**
+ * Remove o projeto. As reuniões não são apagadas — apenas ficam sem projeto,
+ * o que é o comportamento menos destrutivo diante de uma ação ambígua. As
+ * tarefas vão junto: sem projeto elas não teriam onde viver.
+ */
+function deleteProject(dir, projectId) {
+  const conn = db.open(dir);
+  if (!conn) return { ok: false, message: 'Pasta de saída indisponível.' };
+  const existe = conn.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId);
+  if (!existe) return { ok: false, message: 'Projeto não encontrado.' };
+
+  // As chaves estrangeiras cuidam do resto: tarefas caem, vínculos zeram.
+  db.transaction(conn, () => {
+    conn.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
+  });
+  return { ok: true };
+}
+
+/** Anexa a reunião a um projeto; `projectId` vazio desanexa. */
+function assignMeeting(dir, meetingId, projectId) {
+  const conn = db.open(dir);
+  if (!conn) return { ok: false, message: 'Pasta de saída indisponível.' };
+
+  if (projectId) {
+    const existe = conn.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId);
+    if (!existe) return { ok: false, message: 'Projeto não encontrado.' };
+    conn.prepare('INSERT OR REPLACE INTO meetings (id, project_id) VALUES (?, ?)')
+      .run(meetingId, projectId);
+  } else {
+    conn.prepare('DELETE FROM meetings WHERE id = ?').run(meetingId);
+  }
+  return { ok: true };
+}
+
+/** Acompanha o novo id quando a reunião é renomeada. */
+function renameMeeting(dir, oldId, newId) {
+  const conn = db.open(dir);
+  if (!conn) return;
+  conn.prepare('UPDATE meetings SET id = ? WHERE id = ?').run(newId, oldId);
+}
+
+/** Esquece uma reunião excluída, para não acumular órfãos. */
+function forgetMeeting(dir, meetingId) {
+  const conn = db.open(dir);
+  if (!conn) return;
+  conn.prepare('DELETE FROM meetings WHERE id = ?').run(meetingId);
+}
+
+module.exports = {
+  assignMeeting,
+  deleteProject,
+  forgetMeeting,
+  getProject,
+  listProjects,
+  projectOf,
+  projectsByMeeting,
+  renameMeeting,
+  saveProject,
+};

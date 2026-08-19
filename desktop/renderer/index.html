@@ -274,8 +274,7 @@
       </header>
       <dl class="meta" id="drawer-meta"></dl>
       <div class="drawer-actions">
-        <button class="btn solid" id="drawer-resumo" type="button">Gerar resumo</button>
-        <button class="btn solid" id="drawer-tarefas" type="button">Gerar tarefas</button>
+        <button class="btn solid" id="drawer-docs" type="button">Gerar resumo e tarefas</button>
         <button class="btn ghost" id="drawer-rename" type="button">Renomear</button>
         <button class="btn ghost danger" id="drawer-delete" type="button">Excluir</button>
       </div>
@@ -358,6 +357,13 @@
         <label class="field"><span>Projeto</span>
           <select class="input" id="mc-project"><option value="">sem projeto</option></select>
         </label>
+        <label class="check">
+          <input type="checkbox" id="mc-auto" />
+          <span>
+            <strong>Deixar a IA nomear pelo conteúdo</strong>
+            <em>a reunião entra com o nome acima e é renomeada quando a transcrição fica pronta</em>
+          </span>
+        </label>
         <p class="err" id="mc-error"></p>
         <div class="modal-actions">
           <span class="spacer"></span>
@@ -396,15 +402,9 @@
 
     <div class="overlay" id="overlay-process" hidden>
       <canvas class="overlay-net" id="process-net" aria-hidden="true"></canvas>
-      <p class="overlay-kicker" id="process-file">arquivo</p>
       <h1 class="overlay-title" id="process-stage">Processando</h1>
       <p class="overlay-clock"><span class="pct" id="process-pct">0%</span></p>
-      <ol class="pipeline" id="pipeline">
-        <li data-step="audio">Extrair áudio</li>
-        <li data-step="transcription">Transcrever</li>
-        <li data-step="export">Gravar arquivos</li>
-        <li data-step="extract">Extrair tarefas</li>
-      </ol>
+      <p class="overlay-hint" id="process-detail"></p>
       <button class="btn ghost" id="process-cancel" type="button">Cancelar</button>
     </div>
 

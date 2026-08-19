@@ -24,6 +24,7 @@ Escreva **apenas** um arquivo JSON em `{{JSON}}`, com esta forma exata:
 
 ```json
 {
+  "title": "assunto da reunião em 3 a 6 palavras",
   "tasks": [
     {
       "title": "frase curta no infinitivo, até 60 caracteres",
@@ -37,9 +38,14 @@ Escreva **apenas** um arquivo JSON em `{{JSON}}`, com esta forma exata:
 
 Regras da saída:
 
+- `title` nomeia a reunião pelo assunto tratado, como alguém a chamaria na
+  conversa: "Alinhamento do módulo de usuários", "Consulta de retorno". Sem
+  data, sem hora, sem a palavra "reunião" no começo, sem ponto final e sem os
+  caracteres `< > : " / \ | ? *`.
 - `priority` é `high` quando há urgência ou dependência explícita, `low` quando
   foi tratado como opcional, `medium` no resto.
 - `assignee` só recebe nome dito na transcrição. Sem nome, use `""`.
 - Nada de comentários, markdown ou texto fora do JSON.
 
-Ao final, responda em uma única linha: quantas tarefas o arquivo contém.
+Ao final, responda em uma única linha: o título escolhido e quantas tarefas o
+arquivo contém.

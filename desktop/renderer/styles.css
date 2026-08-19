@@ -1049,18 +1049,18 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 }
 .overlay[hidden] { display: none; }
 
+/* A rede é um bloco no fluxo: como fundo, ela passava por cima do texto e a
+   coluna deixava de parecer centrada. */
 .overlay-net {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -120%);
+  flex: none;
   width: min(560px, 80vw);
   height: 150px;
+  margin-bottom: 6px;
   pointer-events: none;
 }
 
 .overlay-kicker {
-  margin: 90px 0 0;
+  margin: 0;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.14em;
@@ -1113,26 +1113,6 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 }
 
 .overlay-actions { display: flex; gap: 10px; margin-top: 8px; }
-
-.pipeline {
-  display: flex;
-  gap: 8px;
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-}
-.pipeline li {
-  padding: 6px 14px;
-  border: 1px solid var(--line-soft);
-  border-radius: 999px;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  color: var(--muted-dim);
-  transition: color 200ms var(--ease), border-color 200ms var(--ease), box-shadow 200ms var(--ease);
-}
-.pipeline li.is-active { color: var(--cyan); border-color: var(--cyan-dim); box-shadow: var(--glow); }
-.pipeline li.is-done { color: var(--mint); border-color: rgba(94, 234, 212, 0.3); }
 
 /* ===== Toast ===== */
 
@@ -1369,6 +1349,26 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 }
 .datatable .acts-col { width: 1%; white-space: nowrap; text-align: right; }
 .datatable .row-acts { display: flex; gap: 4px; justify-content: flex-end; }
+
+/* Opção com explicação embaixo — usada no modal de importação. */
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 140ms var(--ease);
+}
+
+.check:hover { border-color: var(--line); }
+.check:has(input:checked) { border-color: var(--cyan-dim); }
+.check input { margin-top: 2px; accent-color: var(--cyan); cursor: pointer; }
+.check span { display: flex; flex-direction: column; gap: 3px; }
+.check strong { font-size: 13px; font-weight: 600; color: var(--text); }
+.check em { font-style: normal; font-size: 12px; line-height: 1.45; color: var(--muted-dim); }
 
 /* ===== Modal de exclusão ===== */
 

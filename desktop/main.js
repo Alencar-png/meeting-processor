@@ -263,7 +263,8 @@ function startJob(payload) {
   currentJob = {
     child, containerName, canceled: false, outputDir, engine,
     projectId: payload.projectId || '',
-    cleanup: payload.cleanup || '',   // gravação temporária, apagada no fim
+    autoName: Boolean(payload.autoName),   // deixa a IA nomear pelo conteúdo
+    cleanup: payload.cleanup || '',        // gravação temporária, apagada no fim
   };
 
   let stdoutBuffer = '';
@@ -286,7 +287,7 @@ function startJob(payload) {
           if (event.meetingId && projectId) {
             groups.assignMeeting(outputDir, event.meetingId, projectId);
           }
-          finishJob(event, outputDir, projectId);
+          finishJob(event, outputDir, projectId, currentJob?.autoName);
           continue;   // o done é anunciado depois da extração
         }
         if (event.event === 'error') lastError = event.message;
@@ -355,7 +356,7 @@ function startJob(payload) {
  * outra. Os eventos são os mesmos do pipeline para a janela não precisar de um
  * segundo caminho de progresso.
  */
-async function importTranscriptJob({ filePath, name, projectId }) {
+async function importTranscriptJob({ filePath, name, projectId, autoName = false }) {
   if (currentJob || currentExtraction) {
     return { ok: false, message: 'Espere o processamento em andamento terminar.' };
   }
@@ -387,27 +388,57 @@ async function importTranscriptJob({ filePath, name, projectId }) {
     elapsed: 0,
     meetingId: resultado.id,
   };
-  await finishJob(evento, outputDir, projectId);
-  return { ok: true, meetingId: resultado.id };
+  await finishJob(evento, outputDir, projectId, autoName);
+  return { ok: true, meetingId: evento.meetingId };
 }
 
 /**
  * Fecha o ciclo da reunião: com projeto, as ações viram cards antes do aviso de
  * pronto; sem projeto, não há onde pendurar tarefa e o aviso sai na hora.
  */
-async function finishJob(event, outputDir, projectId) {
+/**
+ * Renomeia a reunião e leva junto os vínculos.
+ *
+ * O id é o nome da pasta: renomear muda o id, e projeto e tarefas precisam
+ * acompanhar para não virarem órfãos.
+ */
+function renameMeetingEverywhere(dir, id, novoNome) {
+  const result = library.renameMeeting(dir, id, novoNome);
+  if (result.ok && result.id && result.id !== id) {
+    groups.renameMeeting(dir, id, result.id);
+    tasks.renameMeeting(dir, id, result.id);
+  }
+  return result;
+}
+
+async function finishJob(event, outputDir, projectId, autoName = false) {
   const transcricao = event.files.find((f) => f.toLowerCase().endsWith('.md'));
 
-  if (projectId && transcricao) {
+  // A leitura da transcrição serve às duas coisas: as ações combinadas e, se
+  // foi pedido, o nome da reunião. Uma passada só do modelo.
+  if (transcricao && (projectId || autoName)) {
     send('job:event', { event: 'stage', key: 'extract', progress: 20, detail: 'lendo a transcrição' });
-    const { created, message } = await extractTasks({
+    const { created, title, message } = await extractTasks({
       meetingId: event.meetingId,
       projectId,
       transcriptPath: transcricao,
-      context: groups.getGroup(outputDir, projectId)?.context || '',
+      context: projectId ? groups.getGroup(outputDir, projectId)?.context || '' : '',
     });
     event.tasksCreated = created;
-    if (message) send('job:log', `Extração de tarefas: ${message}`);
+    if (message) send('job:log', `Extração: ${message}`);
+
+    if (autoName && title) {
+      const renomeada = renameMeetingEverywhere(outputDir, event.meetingId, title);
+      if (renomeada.ok && renomeada.id) {
+        event.meetingId = renomeada.id;
+        event.renamedTo = renomeada.id;
+        // Os caminhos antigos não existem mais depois do rename.
+        event.files = library.getMeeting(outputDir, renomeada.id)?.files.map((f) => f.path)
+          || event.files;
+      } else if (renomeada.message) {
+        send('job:log', `Nome sugerido não pôde ser aplicado: ${renomeada.message}`);
+      }
+    }
   } else {
     event.tasksCreated = 0;
   }
@@ -471,7 +502,7 @@ function extractTasks({ meetingId, projectId, transcriptPath, context }) {
         meetingId,
         items: Array.isArray(dados.tasks) ? dados.tasks : [],
       });
-      resolve({ created });
+      resolve({ created, title: typeof dados.title === 'string' ? dados.title.trim() : '' });
     });
   });
 }
@@ -532,108 +563,138 @@ async function cancelJob() {
 // --- Documentos gerados pelo Claude ----------------------------------------
 
 /**
- * Gera tarefas ou resumo executivo em PDF a partir de uma transcrição.
+ * Gera um documento (resumo ou tarefas) a partir da transcrição.
  *
- * Roda `claude -p` em modo headless na pasta da transcrição e acompanha o
- * stream de eventos para a janela mostrar o que está acontecendo.
+ * Resolve quando o PDF existe no disco — o veredito é o arquivo, não o que o
+ * modelo disse ter feito.
  */
-function startDocJob({ kind, transcriptPath, context = '' }) {
+function runDocJob({ kind, transcriptPath, context = '' }) {
+  return new Promise((resolve) => {
+    const browser = findBrowser();
+    if (!browser) {
+      resolve({ kind, ok: false, message: 'Nenhum navegador encontrado para gerar o PDF (Edge ou Chrome).' });
+      return;
+    }
+
+    const pdfPath = pdfPathFor(kind, transcriptPath);
+    let prompt;
+    try {
+      prompt = buildPrompt(kind, { transcriptPath, pdfPath, browser, context });
+    } catch (err) {
+      resolve({ kind, ok: false, message: err.message });
+      return;
+    }
+
+    const child = spawn(findClaude(), buildClaudeArgs(), {
+      cwd: path.dirname(transcriptPath),
+      windowsHide: true,
+    });
+    // O prompt vai por stdin: como argumento, o shell do Windows o corrompe.
+    child.stdin.write(prompt);
+    child.stdin.end();
+
+    currentDocJob = { child, kind, pdfPath, canceled: currentDocJob?.canceled || false };
+
+    let buffer = '';
+    let lastMessage = '';
+
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('{')) continue;
+        try {
+          const event = JSON.parse(trimmed);
+          const description = describeEvent(event);
+          if (description) send('doc:progress', { kind, description });
+          if (event.type === 'result') lastMessage = event.result || lastMessage;
+        } catch {
+          // Linha fora do formato: ignora em vez de derrubar a geração.
+        }
+      }
+    });
+
+    child.stderr.on('data', (chunk) => {
+      const text = chunk.toString().trim();
+      if (text) lastMessage = text.split('\n').filter(Boolean).pop() || lastMessage;
+    });
+
+    child.on('error', (err) => {
+      resolve({ kind, ok: false, message: `Falha ao executar o Claude: ${err.message}` });
+    });
+
+    child.on('close', () => {
+      const canceled = currentDocJob?.canceled;
+      const ok = !canceled && fs.existsSync(pdfPath) && fs.statSync(pdfPath).size > 0;
+      resolve({
+        kind,
+        ok,
+        canceled,
+        pdfPath: ok ? pdfPath : null,
+        message: ok ? lastMessage : `${canceled ? 'Geração cancelada.' : 'O PDF não foi gerado.'} ${lastMessage}`.trim(),
+      });
+    });
+  });
+}
+
+/**
+ * Gera os documentos da reunião.
+ *
+ * Resumo e tarefas saem da mesma leitura e sempre foram pedidos juntos: são um
+ * botão só. A ordem importa — o resumo primeiro, porque é o que a pessoa abre
+ * enquanto o outro ainda está sendo escrito.
+ */
+async function generateDocs({ meetingId }) {
   if (currentDocJob) {
     return { started: false, message: 'Já existe um documento sendo gerado.' };
   }
-  if (!transcriptPath || !fs.existsSync(transcriptPath)) {
+
+  const dir = outDir();
+  const meeting = library.getMeeting(dir, meetingId);
+  if (!meeting || !meeting.transcript) {
     return { started: false, message: 'Transcrição não encontrada.' };
   }
 
-  const browser = findBrowser();
-  if (!browser) {
-    return {
-      started: false,
-      message: 'Nenhum navegador encontrado para gerar o PDF (Edge ou Chrome).',
-    };
-  }
+  const context = meeting.group?.context || '';
+  currentDocJob = { child: null, kind: 'resumo', canceled: false };
 
-  const pdfPath = pdfPathFor(kind, transcriptPath);
-  let prompt;
-  try {
-    prompt = buildPrompt(kind, { transcriptPath, pdfPath, browser, context });
-  } catch (err) {
-    return { started: false, message: err.message };
-  }
-
-  const child = spawn(findClaude(), buildClaudeArgs(), {
-    cwd: path.dirname(transcriptPath),
-    windowsHide: true,
-  });
-  // O prompt vai por stdin: como argumento, o shell do Windows o corrompe.
-  child.stdin.write(prompt);
-  child.stdin.end();
-
-  currentDocJob = { child, kind, pdfPath, canceled: false };
-
-  let buffer = '';
-  let lastMessage = '';
-
-  child.stdout.on('data', (chunk) => {
-    buffer += chunk.toString();
-    const lines = buffer.split('\n');
-    buffer = lines.pop();
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('{')) continue;
-      try {
-        const event = JSON.parse(trimmed);
-        const description = describeEvent(event);
-        if (description) send('doc:progress', { kind, description });
-        if (event.type === 'result') lastMessage = event.result || lastMessage;
-      } catch {
-        // Linha fora do formato: ignora em vez de derrubar a geração.
-      }
+  (async () => {
+    const resultados = [];
+    for (const kind of ['resumo', 'tarefas']) {
+      if (currentDocJob?.canceled) break;
+      resultados.push(await runDocJob({ kind, transcriptPath: meeting.transcript, context }));
     }
-  });
-
-  child.stderr.on('data', (chunk) => {
-    const text = chunk.toString().trim();
-    if (text) lastMessage = text.split('\n').filter(Boolean).pop() || lastMessage;
-  });
-
-  child.on('error', (err) => {
+    const canceled = Boolean(currentDocJob?.canceled);
     currentDocJob = null;
-    send('doc:done', { kind, ok: false, message: `Falha ao executar o Claude: ${err.message}` });
-  });
-
-  child.on('close', () => {
-    const canceled = currentDocJob?.canceled;
-    currentDocJob = null;
-    if (canceled) {
-      send('doc:done', { kind, ok: false, canceled: true, message: 'Geração cancelada.' });
-      return;
-    }
-    // O veredito é o arquivo existir — não o que o modelo disse ter feito.
-    const ok = fs.existsSync(pdfPath) && fs.statSync(pdfPath).size > 0;
+    const gerados = resultados.filter((r) => r.ok);
     send('doc:done', {
-      kind,
-      ok,
-      pdfPath: ok ? pdfPath : null,
-      message: ok ? lastMessage : `O PDF não foi gerado. ${lastMessage}`.trim(),
+      meetingId,
+      ok: gerados.length > 0,
+      canceled,
+      kinds: gerados.map((r) => r.kind),
+      message: gerados.length === resultados.length
+        ? ''
+        : (resultados.find((r) => !r.ok)?.message || ''),
     });
-  });
+  })();
 
-  return { started: true, pdfPath };
+  return { started: true };
 }
 
 function cancelDocJob() {
   if (!currentDocJob) return { canceled: false };
   currentDocJob.canceled = true;
+  const child = currentDocJob.child;
+  if (!child) return { canceled: true };
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(currentDocJob.child.pid), '/t', '/f'], { windowsHide: true });
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true });
   } else {
-    currentDocJob.child.kill();
+    child.kill();
   }
   return { canceled: true };
 }
-
-// --- Build da imagem --------------------------------------------------------
 
 function buildImage() {
   return new Promise((resolve) => {
@@ -677,17 +738,8 @@ ipcMain.handle('projects:delete', (_e, projectId) => {
 // Reuniões (a pasta de saída é a fonte da verdade).
 ipcMain.handle('meetings:list', (_e, projectId) => workspace.listMeetings(outDir(), projectId));
 ipcMain.handle('meetings:get', (_e, id) => workspace.getMeeting(outDir(), id));
-ipcMain.handle('meetings:rename', (_e, { id, name }) => {
-  const dir = outDir();
-  const result = library.renameMeeting(dir, id, name);
-  // O id de uma reunião é o nome da pasta: renomear muda o id, e os vínculos
-  // de projeto e de tarefa precisam acompanhar para não virarem órfãos.
-  if (result.ok && result.id && result.id !== id) {
-    groups.renameMeeting(dir, id, result.id);
-    tasks.renameMeeting(dir, id, result.id);
-  }
-  return result;
-});
+ipcMain.handle('meetings:rename', (_e, { id, name }) =>
+  renameMeetingEverywhere(outDir(), id, name));
 ipcMain.handle('meetings:delete', async (_e, { id, files }) => {
   const dir = outDir();
   // Vai para a Lixeira, não para o vazio: um clique errado dá para desfazer.
@@ -718,19 +770,7 @@ ipcMain.handle('job:cancel', () => cancelJob());
 ipcMain.handle('transcript:import', (_e, payload) => importTranscriptJob(payload));
 
 // Documentos: o front manda o id da reunião; aqui viram caminho e contexto.
-ipcMain.handle('doc:generate', (_e, { kind, meetingId }) => {
-  const dir = outDir();
-  const meeting = library.getMeeting(dir, meetingId);
-  if (!meeting || !meeting.transcript) {
-    return { started: false, message: 'Transcrição não encontrada.' };
-  }
-  return startDocJob({
-    kind,
-    transcriptPath: meeting.transcript,
-    context: meeting.group?.context || '',
-    meetingId,
-  });
-});
+ipcMain.handle('doc:generate', (_e, { meetingId }) => generateDocs({ meetingId }));
 ipcMain.handle('doc:cancel', () => cancelDocJob());
 
 // Chat por projeto — o RAG entra no M3 (embeddings + Vector DB).

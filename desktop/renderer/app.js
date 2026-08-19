@@ -936,12 +936,11 @@ $('drawer-delete').addEventListener('click', async () => {
   await refreshAll();
 });
 
-for (const kind of ['resumo', 'tarefas']) {
-  $(`drawer-${kind}`).addEventListener('click', async () => {
-    toast(`Gerando <strong>${kind}</strong> — o Claude está lendo a reunião…`);
-    await window.api.generateDoc({ kind, meetingId: drawerMeetingId });
-  });
-}
+$('drawer-docs').addEventListener('click', async () => {
+  toast('Gerando <strong>resumo e tarefas</strong> — o Claude está lendo a reunião…');
+  const r = await window.api.generateDoc({ meetingId: drawerMeetingId });
+  if (r && r.started === false) toast(r.message);
+});
 
 // --- Modais -----------------------------------------------------------------
 
@@ -1094,6 +1093,7 @@ function askImport(filePath, kind = "video") {
   $('mc-name').value = filePath.split(/[\\/]/).pop().replace(/\.[^.]+$/, '');
   $('mc-error').textContent = '';
   $('mc-submit').textContent = kind === 'video' ? 'Transcrever' : 'Importar';
+  $('mc-auto').checked = false;
   const sel = $('mc-project');
   sel.replaceChildren(new Option('sem projeto', ''));
   for (const p of projects) sel.append(new Option(p.name, p.id));
@@ -1109,11 +1109,12 @@ $('mc-form').addEventListener('submit', async (e) => {
   if (!nome) { $('mc-error').textContent = 'Dê um nome à reunião.'; return; }
   if (/[<>:"/\\|?*]/.test(nome)) { $('mc-error').textContent = 'O nome não pode conter < > : " / \\ | ? *'; return; }
   const projectId = $('mc-project').value;
+  const autoName = $('mc-auto').checked;
   closeModals();
 
   if (pendingKind === 'transcript') {
-    startProcessing($('mc-file').textContent, projectId, ['export', 'extract']);
-    const r = await window.api.importTranscript({ filePath: pendingVideo, name: nome, projectId });
+    startProcessing($('mc-file').textContent, projectId);
+    const r = await window.api.importTranscript({ filePath: pendingVideo, name: nome, projectId, autoName });
     if (!r.ok) {
       $('overlay-process').hidden = true;
       toast(`Não deu para importar: ${r.message}`);
@@ -1122,7 +1123,7 @@ $('mc-form').addEventListener('submit', async (e) => {
   }
 
   startProcessing($('mc-file').textContent, projectId);
-  await window.api.startJob({ videoPath: pendingVideo, name: nome, projectId });
+  await window.api.startJob({ videoPath: pendingVideo, name: nome, projectId, autoName });
 });
 
 $('mc-cancel').addEventListener('click', closeModals);
@@ -1312,21 +1313,16 @@ const STAGE_RANGE = { audio: [0, 0.1], transcription: [0.1, 0.72], export: [0.72
 const STAGE_LABELS = { audio: 'Extraindo áudio', transcription: 'Transcrevendo', export: 'Gravando arquivos', extract: 'Extraindo tarefas' };
 
 /**
- * Abre a tela de processamento.
+ * Abre a tela de processamento: a rede e uma frase que acompanha a etapa.
  *
- * `etapas` limita o que a lista mostra: uma transcrição importada não passa
- * por áudio nem por Whisper, e exibir esses passos apagados sugeriria que
- * algo ficou pelo caminho.
+ * A lista de passos saiu — o texto já diz onde o trabalho está, e a coluna
+ * curta cabe centralizada em qualquer janela.
  */
-function startProcessing(label, projectId, etapas = null) {
+function startProcessing(label, projectId) {
   jobProjectId = projectId || '';
-  $('process-file').textContent = label;
   $('process-stage').textContent = 'Iniciando';
   $('process-pct').textContent = '0%';
-  for (const li of $('pipeline').children) {
-    li.className = '';
-    li.hidden = Boolean(etapas) && !etapas.includes(li.dataset.step);
-  }
+  $('process-detail').textContent = label;
   $('overlay-process').hidden = false;
   if (!processNet) processNet = window.createNeural($('process-net'));
   window.dispatchEvent(new Event('resize'));
@@ -1343,21 +1339,22 @@ window.api.on('job:event', async (event) => {
     processNet?.setProgress(overall);
     $('process-pct').textContent = `${Math.round(overall * 100)}%`;
     $('process-stage').textContent = STAGE_LABELS[event.key] || event.label || '';
-    for (const li of $('pipeline').children) {
-      const idx = ['audio', 'transcription', 'export', 'extract'];
-      const cur = idx.indexOf(event.key);
-      const mine = idx.indexOf(li.dataset.step);
-      li.className = mine < cur ? 'is-done' : mine === cur ? 'is-active' : '';
-    }
+    if (event.detail) $('process-detail').textContent = event.detail;
   } else if (event.event === 'done') {
     processNet?.setProgress(1);
-    for (const li of $('pipeline').children) li.className = 'is-done';
+    $('process-stage').textContent = 'Pronto';
+    $('process-detail').textContent = '';
     setTimeout(async () => {
       $('overlay-process').hidden = true;
       await refreshAll();
-      toast(event.tasksCreated
-        ? `Reunião pronta — <strong>${event.tasksCreated} tarefas</strong> criadas no kanban`
-        : 'Reunião pronta — transcrição na biblioteca');
+      if (event.renamedTo) {
+        toast(`Reunião pronta como <strong>${event.renamedTo}</strong>`
+          + (event.tasksCreated ? ` — ${event.tasksCreated} tarefas no kanban` : ''));
+      } else {
+        toast(event.tasksCreated
+          ? `Reunião pronta — <strong>${event.tasksCreated} tarefas</strong> criadas no kanban`
+          : 'Reunião pronta — transcrição na biblioteca');
+      }
       if (jobProjectId) openProject(jobProjectId, event.tasksCreated ? 'kanban' : 'meetings');
       if (event.meetingId) openDrawer(event.meetingId);
     }, 600);
@@ -1370,11 +1367,15 @@ window.api.on('job:event', async (event) => {
 });
 
 window.api.on('doc:done', async (result) => {
-  if (result.ok) {
-    toast(`<strong>${result.kind === 'tarefas' ? 'Tarefas' : 'Resumo'}</strong> gerado em PDF.`);
-    if (drawerMeetingId === result.meetingId) openDrawer(result.meetingId);
-    refreshAll();
+  if (result.canceled) { toast('Geração cancelada.'); return; }
+  if (!result.ok) {
+    toast(`Não deu para gerar os documentos. ${result.message || ''}`.trim());
+    return;
   }
+  const nomes = result.kinds.map((k) => (k === 'tarefas' ? 'tarefas' : 'resumo'));
+  toast(`<strong>${nomes.join(' e ')}</strong> em PDF na reunião.`);
+  if (drawerMeetingId === result.meetingId) openDrawer(result.meetingId);
+  refreshAll();
 });
 
 window.api.on('doc:progress', ({ description }) => {

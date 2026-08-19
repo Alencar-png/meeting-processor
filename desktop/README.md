@@ -1,24 +1,46 @@
-# Meeting Processor — app desktop
+# Synapse — app desktop
 
-Solte um vídeo na janela; ele transcreve e grava os arquivos na pasta que você
-escolher. Nada roda na nuvem: o Whisper trabalha dentro de um container Docker
-na sua máquina.
+Um workspace por projeto para reuniões. Você grava ou solta um vídeo na janela;
+o app extrai o áudio, transcreve, extrai as tarefas combinadas e liga tudo ao
+projeto. Nada sai da máquina: transcrição e extração rodam localmente.
+
+O nome antigo era *Meeting Processor*; o pipeline Python continua o mesmo.
+
+## O modelo mental
+
+O centro é o **projeto**, não a transcrição:
+
+```
+                    PROJETO
+                       │
+        ┌──────────────┼──────────────┐
+        ↓              ↓              ↓
+     REUNIÃO         TAREFA        DOCUMENTO
+        │              │
+        └──── grafo ───┘
+```
+
+Cada projeto tem visão geral, kanban, reuniões, grafo e chat. Um projeto
+carrega também um texto de contexto, usado para orientar o registro dos
+documentos gerados.
 
 ## Como funciona
 
 ```
 janela (Electron)  →  motor de transcrição  →  arquivos na pasta de saída
-       ↑                      │
-       └──── eventos JSONL ───┘
+       ↑                      │                        │
+       └──── eventos JSONL ───┘                  extração (claude -p)
+                                                        │
+                                                  cards no kanban
 ```
 
-O app não fala Python: ele faz spawn do motor, que emite um evento JSON por
-linha no stdout (`stage`, `done`, `error`). Isso mantém o Python headless e a
-interface descartável.
+O app não fala Python: faz spawn do motor, que emite um evento JSON por linha
+no stdout (`stage`, `done`, `error`). Terminada a transcrição, o app roda a
+extração estruturada e só então anuncia a reunião como pronta.
 
 ## Os dois motores
 
-Clique no indicador no canto superior direito para alternar.
+Alterne em **Configurações → Motor ativo**.
 
 | Motor | Onde roda | Velocidade |
 |-------|-----------|------------|
@@ -26,193 +48,90 @@ Clique no indicador no canto superior direito para alternar.
 | **Docker** | container CPU-only | ~2x tempo real com 16 threads |
 
 Medido no mesmo áudio de 5 min com `large-v3-turbo`: **27 s na GPU** contra
-**153 s na CPU**. Uma reunião de 1 h sai em ~5 min na GPU.
-
-O motor Docker existe para quando não há GPU ou whisper.cpp compilado — ele
-não depende de nada instalado além do próprio Docker. No Windows, o Docker
-Desktop **não** expõe GPU AMD, então container e GPU são exclusivos.
+**153 s na CPU**. No Windows o Docker Desktop **não** expõe GPU AMD, então
+container e GPU são exclusivos.
 
 ## Pré-requisitos
 
 - **Node.js 20+** para abrir o app.
-- Para o motor **GPU**: Python com as dependências do projeto, ffmpeg no PATH,
+- Motor **GPU**: Python com as dependências do projeto, ffmpeg no PATH,
   `whisper-cli.exe` em `.whisper-cpp/` e ao menos um modelo `.bin` em
-  `.models/`. Para compilar o whisper.cpp com Vulkan:
-
-```bash
-git clone --depth 1 --branch v1.9.2 https://github.com/ggml-org/whisper.cpp.git .whisper-cpp/src
-cmake -S .whisper-cpp/src -B .whisper-cpp/src/build -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
-cmake --build .whisper-cpp/src/build --config Release --target whisper-cli -j
-cp .whisper-cpp/src/build/bin/Release/*.exe .whisper-cpp/src/build/bin/Release/*.dll .whisper-cpp/
-```
-
-- Para o motor **Docker**: Docker Desktop rodando e a imagem construída
-  (`docker build -t meeting-processor:latest .`). Se faltar, o app oferece o
-  botão **Construir imagem**.
+  `.models/`.
+- Motor **Docker**: só o Docker Desktop.
+- Extração de tarefas e PDFs: **Claude Code** instalado e autenticado. O app
+  procura o binário em `~/.local/bin` e no PATH; `CLAUDE_BIN` força um caminho.
 
 ## Rodar
 
-Clique duas vezes em `Meeting Processor (sem console).vbs`, na raiz do projeto.
-Ou, pela linha de comando:
-
 ```bash
-cd desktop
-npm install
-npm start
+cd desktop && npm install && npm start
 ```
 
-Ainda **não há um instalador `.exe`**: o app roda a partir do repositório, com
-o Node.js instalado. Empacotar com electron-builder é possível, mas o motor GPU
-depende do Python e do whisper.cpp do projeto, que ficariam fora do pacote.
+Ou clique em `Meeting Processor (sem console).vbs` na raiz do projeto.
 
-## O que dá para ajustar
+## Os fluxos
 
-| Controle | O que muda |
-|----------|------------|
-| **Motor** (canto superior) | Alterna entre GPU e Docker. |
-| **Salvar em** | Pasta onde o `.md` e o `.txt` são gravados. Fica salvo entre sessões. |
-| **Modelo** | No motor GPU, lista os `.bin` de `.models/`. No Docker, `tiny` → `large-v3`. |
-| **Idioma** | Idioma do áudio, ou `detectar`. |
+### Gravar
 
-No motor Docker o modelo é baixado uma vez para o volume
-`meeting-processor-models`. No motor GPU, os modelos vêm de `.models/` —
-baixe de <https://huggingface.co/ggerganov/whisper.cpp>. `large-v3-turbo` é o
-melhor equilíbrio: qualidade de `large` com velocidade muito maior.
+Dentro de um projeto, **Iniciar reunião** grava microfone **e** áudio do
+sistema (loopback), mixados num arquivo só — numa chamada online o microfone
+traz apenas o seu lado. Sem permissão de loopback, o app segue só com o
+microfone e diz isso na tela. Ao finalizar, o áudio entra no mesmo pipeline da
+importação e o arquivo temporário é apagado no fim.
 
-## Saída
+### Importar
 
-Ao soltar um vídeo, o app **pergunta o nome da reunião** (sugerindo o nome do
-arquivo). Esse nome vira uma pasta, e tudo daquela reunião mora nela:
+Solte um vídeo em qualquer lugar da janela, ou use **Importar vídeo**. Você
+confirma o nome e o projeto antes de começar.
+
+### Depois da transcrição
+
+O Claude lê a transcrição e devolve as ações combinadas em JSON — título,
+descrição, responsável e prioridade. Elas viram cards no backlog do projeto,
+cada um ligado à reunião de origem. Sem projeto, essa etapa é pulada: tarefa
+sem projeto não teria onde viver.
+
+Resumo e tarefas em PDF continuam sob demanda, no painel da reunião.
+
+## Onde ficam os dados
+
+A pasta de saída é a fonte da verdade — não há banco paralelo:
 
 ```
-Transcricoes/
-└── Reunião com o cliente/
-    ├── Reunião com o cliente.md            transcrição com timestamps
-    ├── Reunião com o cliente.txt           só o texto
-    ├── Reunião com o cliente - Tarefas.pdf
-    ├── Reunião com o cliente - Resumo.pdf
-    └── meeting.json                        metadados da reunião
+<pasta de saída>/
+├── groups.json                    # projetos e a que projeto cada reunião pertence
+├── tasks.json                     # tarefas do kanban
+└── <nome da reunião>/
+    ├── <nome>.md                  # transcrição com timestamps
+    ├── <nome>.txt
+    ├── meeting.json               # data, duração, modelo, idioma, nº de falas
+    └── <nome> - Tarefas.pdf       # quando gerado
 ```
-
-Se já existir uma pasta com esse nome, a nova vira `Reunião com o cliente (2)` —
-nada é sobrescrito.
-
-O `meeting.json` guarda **data e hora da gravação** (lidas do próprio vídeo, não
-do momento da transcrição), duração, número de falas, modelo e idioma. Quando o
-vídeo não traz a data nas suas tags, o app usa a data do arquivo e diz isso na
-tela, em vez de apresentar um palpite como fato.
-
-## Biblioteca (barra lateral)
-
-A barra lateral lista as reuniões da pasta de saída, da mais recente para a mais
-antiga, com a data e quais documentos já foram gerados. Clique numa reunião para
-ver os metadados e a barra de ações:
-
-| Ação | O que faz |
-|------|-----------|
-| **Visualizar** | Lê a transcrição dentro do app, com busca e destaque no texto. |
-| **Baixar** | Salva uma cópia da transcrição onde você escolher. |
-| **Gerar tarefas** | PDF com a lista de tarefas extraídas da reunião. |
-| **Gerar resumo** | PDF com o resumo da reunião, no registro que o contexto pedir. |
-| **Renomear** | Renomeia a pasta e todos os arquivos de uma vez. |
-| **Excluir** | Apaga a reunião do disco, após confirmação. |
-| Clique num arquivo | Abre no aplicativo padrão do sistema. |
-
-A pasta de saída **é** a biblioteca: não há banco de dados nem índice paralelo.
-Apagar uma pasta por fora do app some da lista, e nada quebra. Transcrições
-antigas, gravadas soltas antes dessa organização, continuam aparecendo.
-
-## Visão em tabela
-
-O botão **tabela** no topo da barra lateral troca para uma tabela com todas as
-reuniões: nome, data da gravação, duração, número de falas, modelo e quais
-documentos existem.
-
-- **Busca** por nome, arquivo de origem ou modelo.
-- **Filtro** por documento: com/sem tarefas, com/sem resumo.
-- **Ordenação** clicando no cabeçalho da coluna (clique de novo inverte).
-- Clicar numa linha abre o detalhe daquela reunião.
-
-O CRUD também está na tabela, sem precisar abrir cada reunião:
-
-| Ação | Onde |
-|------|------|
-| **Nova transcrição** | Botão na barra de filtros: abre o seletor de vídeo. |
-| **Abrir** | Botão da linha (ou clique na linha). |
-| **Renomear** | Botão da linha: o nome vira campo de edição ali mesmo. `Enter` salva, `Esc` cancela. |
-| **Excluir** | Botão da linha, com confirmação que diz quantos arquivos serão apagados. |
-| **Excluir várias** | Marque as caixas (ou o cabeçalho para todas) e use "Excluir selecionadas". |
-
-Selecionar tudo pelo cabeçalho marca apenas as linhas **visíveis** — o que o
-filtro escondeu não é apagado junto. Se uma exclusão em lote falhar no meio, o
-app diz exatamente quais reuniões não foram apagadas.
-
-## Projetos e contexto
-
-Uma reunião pode ser anexada a um **projeto**, e o projeto carrega um
-**contexto**: o que é o projeto, quem participa e que tipo de documento você
-espera. Isso existe porque nem toda call é executiva — uma sessão técnica, uma
-retrospectiva e uma reunião de diretoria pedem registros diferentes.
-
-- **Criar e editar**: botão "Gerenciar projetos" no detalhe da reunião.
-- **Anexar**: seletor "Projeto" no detalhe. O vínculo acompanha a reunião ao
-  renomear e some quando ela é excluída.
-- **Filtrar**: seletor de projeto na tabela; o nome do projeto também aparece na
-  barra lateral e numa coluna própria.
-
-Excluir um projeto **não apaga** as reuniões dele — elas apenas ficam sem
-projeto. Tudo fica num `groups.json` na raiz da pasta de saída.
-
-Ao gerar um documento, o app pergunta qual contexto usar:
-
-| Opção | Quando usar |
-|-------|-------------|
-| **Contexto do projeto** | O padrão, quando a reunião pertence a um projeto com contexto. |
-| **Contexto só para esta reunião** | Quando esta call fugiu do padrão do projeto. |
-| **Sem contexto** | Só a transcrição, em registro neutro. |
-
-O contexto orienta foco, vocabulário e registro — mas os prompts deixam
-explícito que ele **não é fonte de fatos**: nada que esteja apenas no contexto
-pode virar decisão, tarefa ou conclusão atribuída à reunião.
-
-## Tarefas e resumo (PDF)
-
-Os dois botões chamam o **Claude Code em modo headless** (`claude -p`), que lê a
-transcrição, monta um HTML e o converte em PDF pelo Edge ou Chrome. Leva cerca de
-um minuto; a janela mostra o que está acontecendo ("lendo a transcrição",
-"convertendo para PDF") e abre o PDF ao terminar.
-
-Os prompts ficam em `prompts/tarefas.md` e `prompts/resumo.md` — edite-os para
-mudar o formato ou o conteúdo dos documentos, sem tocar no código. Eles instruem
-o Claude a **não inventar** responsáveis, prazos ou decisões: o que a reunião não
-definiu sai marcado como "não definido".
-
-Requisitos: `claude` no PATH (autenticado) e Edge ou Chrome instalado. O app
-considera o documento pronto só quando o arquivo PDF existe no disco — não basta
-o modelo dizer que terminou.
 
 ## Estrutura
 
 ```
 desktop/
-├── main.js              # janela, IPC e execução dos processos
+├── main.js              # janela, IPC, pipeline, gravação e extração
 ├── engines.js           # os dois motores: nativo (GPU) e container (CPU)
 ├── docker-args.js       # montagem do comando do container
-├── claude-jobs.js       # geração de tarefas e resumo via `claude -p`
+├── claude-jobs.js       # prompts e execução do `claude -p`
 ├── library.js           # a pasta de saída lida como biblioteca (CRUD)
-│                        # e os metadados de cada reunião
 ├── groups.js            # projetos e seus contextos (groups.json)
+├── tasks.js             # tarefas do kanban (tasks.json)
+├── workspace.js         # traduz disco → projeto/reunião/tarefa
 ├── preload.js           # ponte segura entre janela e sistema
-├── prompts/             # instruções dos documentos (editáveis)
-│   ├── tarefas.md
-│   └── resumo.md        # ambos aceitam o contexto do projeto
+├── prompts/             # instruções editáveis
+│   ├── extrair.md       # extração estruturada (JSON de tarefas)
+│   ├── tarefas.md       # PDF de tarefas
+│   └── resumo.md        # PDF de resumo
 └── renderer/
-    ├── index.html       # os estados da tela
-    ├── styles.css       # direção visual (grafite, âmbar de VU meter)
-    ├── wave.js          # a forma de onda: ela é o progresso
-    ├── library-ui.js    # renderização da barra lateral e dos arquivos
-    ├── table-ui.js      # tabela: busca, filtro e ordenação
-    └── app.js           # estados, drop do arquivo e eventos
+    ├── index.html       # shell: sidebar, vistas, drawer, overlays
+    ├── styles.css       # tema neural (azul-tinta, ciano, violeta)
+    ├── app.js           # navegação, kanban, gravação, chat, pipeline
+    ├── neural.js        # rede neural dos overlays: é o progresso
+    ├── graph.js         # grafo força-dirigida (hero e projeto)
+    └── mock-api.js      # backend simulado fora do Electron (inerte no app)
 ```
 
 ## Solução de problemas
@@ -220,8 +139,8 @@ desktop/
 | Sintoma | O que fazer |
 |---------|-------------|
 | "motor indisponível" | No modo GPU, confira `.whisper-cpp/whisper-cli.exe` e `.models/*.bin`. No Docker, abra o Docker Desktop e clique em **Verificar de novo**. |
-| "Falta o motor de transcrição" | Clique em **Construir imagem** (leva alguns minutos na primeira vez). |
-| Transcrição muito lenta | Confira o motor no topo da janela: se está em **Docker**, é CPU. A tela mostra `GPU: <placa>` no detalhe quando a GPU entra em ação. |
+| Transcrição muito lenta | Confira o motor em Configurações: se está em **Docker**, é CPU. O detalhe da tela mostra `GPU: <placa>` quando a GPU entra em ação. |
+| Nenhuma tarefa foi criada | A reunião precisa estar num projeto e o `claude` precisa estar autenticado — rode `claude` uma vez no terminal. O log da janela traz o motivo. |
+| "O PDF não foi gerado" | Além do `claude`, é preciso ter Edge ou Chrome instalado. |
+| Gravação sem o áudio da outra pessoa | A tela de gravação diz a fonte em uso. Só microfone significa que o loopback do sistema foi negado. |
 | Arquivo não aceito | Só vídeo e áudio: mkv, mp4, mov, webm, avi, mp3, wav, m4a e afins. |
-| "O PDF não foi gerado" | Rode `claude` uma vez no terminal para confirmar que está autenticado, e verifique se há Edge ou Chrome instalado. |
-| A barra lateral está vazia | Ela mostra a pasta em **Salvar em** — confira se é a pasta certa. |

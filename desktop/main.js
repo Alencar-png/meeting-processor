@@ -8,7 +8,9 @@
  * processo só faz o spawn, lê os eventos JSONL do stdout e repassa à janela.
  */
 
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const {
+  app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, shell,
+} = require('electron');
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -23,13 +25,18 @@ const {
 } = require('./engines');
 const {
   buildClaudeArgs,
+  buildExtractionPrompt,
   buildPrompt,
   describeEvent,
+  extractionPathFor,
   findBrowser,
+  findClaude,
   pdfPathFor,
 } = require('./claude-jobs');
 const library = require('./library');
 const groups = require('./groups');
+const tasks = require('./tasks');
+const workspace = require('./workspace');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
@@ -51,6 +58,7 @@ const DEFAULT_SETTINGS = {
 let mainWindow = null;
 let currentJob = null;    // transcrição em andamento
 let currentDocJob = null; // geração de PDF em andamento
+let currentExtraction = null; // extração de tarefas em andamento
 
 // --- Configurações persistidas ---------------------------------------------
 
@@ -130,14 +138,32 @@ async function enginesStatus() {
 
 // --- Janela -----------------------------------------------------------------
 
+/**
+ * Autoriza a janela a capturar o áudio que sai pelos alto-falantes.
+ *
+ * Numa reunião online o microfone só pega o nosso lado; o que a outra parte
+ * fala vem pelo loopback do sistema. Pedimos a tela só porque o Chromium exige
+ * uma fonte de vídeo junto — o renderer descarta essa trilha e grava só áudio.
+ */
+function enableSystemAudioCapture() {
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      callback({ video: sources[0], audio: 'loopback' });
+    } catch {
+      callback({});   // sem loopback: o renderer segue só com o microfone
+    }
+  }, { useSystemPicker: false });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 940,
-    height: 800,
-    minWidth: 760,
+    width: 1280,
+    height: 860,
+    minWidth: 880,
     minHeight: 660,
-    backgroundColor: '#14110F',
-    title: 'Meeting Processor',
+    backgroundColor: '#070A14',
+    title: 'Synapse',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -232,7 +258,11 @@ function startJob(payload) {
     );
   }
 
-  currentJob = { child, containerName, canceled: false, outputDir, engine };
+  currentJob = {
+    child, containerName, canceled: false, outputDir, engine,
+    projectId: payload.projectId || '',
+    cleanup: payload.cleanup || '',   // gravação temporária, apagada no fim
+  };
 
   let stdoutBuffer = '';
   let lastError = '';
@@ -248,6 +278,14 @@ function startJob(payload) {
         const event = JSON.parse(trimmed);
         if (event.event === 'done' && Array.isArray(event.files)) {
           event.files = event.files.map((f) => toHostPath(f, outputDir));
+          // A reunião acabou de nascer: o id é a pasta que recebeu os arquivos.
+          event.meetingId = workspace.meetingIdFromFiles(outputDir, event.files);
+          const projectId = currentJob?.projectId;
+          if (event.meetingId && projectId) {
+            groups.assignMeeting(outputDir, event.meetingId, projectId);
+          }
+          finishJob(event, outputDir, projectId);
+          continue;   // o done é anunciado depois da extração
         }
         if (event.event === 'error') lastError = event.message;
         send('job:event', event);
@@ -274,7 +312,12 @@ function startJob(payload) {
 
   child.on('close', (code) => {
     const wasCanceled = currentJob?.canceled;
+    const temporario = currentJob?.cleanup;
     currentJob = null;
+    // A gravação bruta já virou transcrição: não precisa ocupar disco.
+    if (temporario) {
+      try { fs.unlinkSync(temporario); } catch { /* já removido */ }
+    }
     if (wasCanceled) {
       send('job:event', { event: 'canceled' });
     } else if (code !== 0) {
@@ -289,7 +332,142 @@ function startJob(payload) {
   return { started: true, containerName };
 }
 
+/**
+ * Gravação feita dentro do app (REC-04): o áudio capturado na janela chega
+ * como bytes, vira um arquivo e entra no mesmo pipeline da importação. A
+ * origem muda; o processamento é o de sempre.
+ */
+/**
+ * Extração estruturada (AI-02): logo depois da transcrição, o Claude lê o
+ * texto e devolve as ações combinadas em JSON, que viram cards no kanban do
+ * projeto. É o que faz a reunião terminar sem trabalho manual.
+ *
+ * Falha aqui não derruba o job: a transcrição já está no disco, e uma extração
+ * que não veio é um kanban vazio, não uma reunião perdida.
+ */
+/**
+ * Fecha o ciclo da reunião: com projeto, as ações viram cards antes do aviso de
+ * pronto; sem projeto, não há onde pendurar tarefa e o aviso sai na hora.
+ */
+async function finishJob(event, outputDir, projectId) {
+  const transcricao = event.files.find((f) => f.toLowerCase().endsWith('.md'));
+
+  if (projectId && transcricao) {
+    send('job:event', { event: 'stage', key: 'extract', progress: 20, detail: 'lendo a transcrição' });
+    const { created, message } = await extractTasks({
+      meetingId: event.meetingId,
+      projectId,
+      transcriptPath: transcricao,
+      context: groups.getGroup(outputDir, projectId)?.context || '',
+    });
+    event.tasksCreated = created;
+    if (message) send('job:log', `Extração de tarefas: ${message}`);
+  } else {
+    event.tasksCreated = 0;
+  }
+
+  send('job:event', event);
+}
+
+function extractTasks({ meetingId, projectId, transcriptPath, context }) {
+  return new Promise((resolve) => {
+    const jsonPath = extractionPathFor(transcriptPath);
+    try { fs.unlinkSync(jsonPath); } catch { /* não existia */ }
+
+    let prompt;
+    try {
+      prompt = buildExtractionPrompt({ transcriptPath, jsonPath, context });
+    } catch (err) {
+      resolve({ created: 0, message: err.message });
+      return;
+    }
+
+    const child = spawn(findClaude(), buildClaudeArgs(), {
+      cwd: path.dirname(transcriptPath),
+      windowsHide: true,
+    });
+    child.stdin.write(prompt);
+    child.stdin.end();
+
+    currentExtraction = child;
+    let progresso = 45;
+
+    child.stdout.on('data', (chunk) => {
+      for (const line of chunk.toString().split('\n')) {
+        if (!line.trim().startsWith('{')) continue;
+        try {
+          const descricao = describeEvent(JSON.parse(line));
+          if (!descricao) continue;
+          progresso = Math.min(90, progresso + 8);
+          send('job:event', { event: 'stage', key: 'extract', progress: progresso, detail: descricao });
+        } catch { /* linha parcial do stream */ }
+      }
+    });
+
+    child.on('error', (err) => resolve({
+      created: 0,
+      message: `não foi possível executar o Claude Code (${err.code || err.message}).`,
+    }));
+
+    child.on('close', () => {
+      currentExtraction = null;
+      let dados = null;
+      try {
+        dados = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+      } catch {
+        resolve({ created: 0, message: 'A extração não devolveu um JSON legível.' });
+        return;
+      }
+      try { fs.unlinkSync(jsonPath); } catch { /* já apagado */ }
+
+      const { created } = tasks.createFromExtraction(loadSettings().outputDir, {
+        projectId,
+        meetingId,
+        items: Array.isArray(dados.tasks) ? dados.tasks : [],
+      });
+      resolve({ created });
+    });
+  });
+}
+
+function startRecordingJob({ projectId, name, audio, mimeType = 'audio/webm' }) {
+  if (currentJob) {
+    return { started: false, message: 'Já existe uma transcrição em andamento.' };
+  }
+  if (!audio || !audio.byteLength) {
+    return { started: false, message: 'A gravação saiu vazia. Confira o microfone e tente de novo.' };
+  }
+
+  const settings = loadSettings();
+  const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
+  const temporario = path.join(
+    app.getPath('temp'),
+    `synapse-gravacao-${Date.now()}.${ext}`,
+  );
+
+  try {
+    fs.writeFileSync(temporario, Buffer.from(audio));
+  } catch (err) {
+    return { started: false, message: `Não foi possível salvar a gravação: ${err.message}` };
+  }
+
+  return startJob({
+    videoPath: temporario,
+    name: name || 'Gravação',
+    projectId,
+    outputDir: settings.outputDir,
+    cleanup: temporario,
+  });
+}
+
 async function cancelJob() {
+  // A extração roda depois do pipeline: cancelar durante ela também vale.
+  if (currentExtraction) {
+    currentExtraction.kill();
+    currentExtraction = null;
+    send('job:event', { event: 'canceled' });
+    return { canceled: true };
+  }
   if (!currentJob) return { canceled: false };
   currentJob.canceled = true;
 
@@ -337,7 +515,7 @@ function startDocJob({ kind, transcriptPath, context = '' }) {
     return { started: false, message: err.message };
   }
 
-  const child = spawn('claude', buildClaudeArgs(), {
+  const child = spawn(findClaude(), buildClaudeArgs(), {
     cwd: path.dirname(transcriptPath),
     windowsHide: true,
   });
@@ -430,39 +608,93 @@ function buildImage() {
 
 // --- IPC --------------------------------------------------------------------
 
+const outDir = () => loadSettings().outputDir;
+
+// Configurações e motores.
 ipcMain.handle('settings:get', () => loadSettings());
 ipcMain.handle('settings:set', (_e, patch) => saveSettings(patch));
 ipcMain.handle('engines:status', () => enginesStatus());
 ipcMain.handle('docker:status', () => dockerStatus());
 ipcMain.handle('docker:build', () => buildImage());
+
+// Projetos — o grupo do disco visto como projeto do workspace.
+ipcMain.handle('projects:list', () => workspace.listProjects(outDir()));
+ipcMain.handle('projects:save', (_e, project) => groups.saveGroup(outDir(), project));
+ipcMain.handle('projects:delete', (_e, projectId) => {
+  const dir = outDir();
+  const result = groups.deleteGroup(dir, projectId);
+  // As tarefas do projeto vão junto: sem projeto elas não teriam onde viver.
+  if (result.ok) tasks.forgetProject(dir, projectId);
+  return result;
+});
+
+// Reuniões (a pasta de saída é a fonte da verdade).
+ipcMain.handle('meetings:list', (_e, projectId) => workspace.listMeetings(outDir(), projectId));
+ipcMain.handle('meetings:get', (_e, id) => workspace.getMeeting(outDir(), id));
+ipcMain.handle('meetings:rename', (_e, { id, name }) => {
+  const dir = outDir();
+  const result = library.renameMeeting(dir, id, name);
+  // O id de uma reunião é o nome da pasta: renomear muda o id, e os vínculos
+  // de projeto e de tarefa precisam acompanhar para não virarem órfãos.
+  if (result.ok && result.id && result.id !== id) {
+    groups.renameMeeting(dir, id, result.id);
+    tasks.renameMeeting(dir, id, result.id);
+  }
+  return result;
+});
+ipcMain.handle('meetings:delete', (_e, { id, files }) => {
+  const dir = outDir();
+  const result = library.deleteMeeting(dir, id, files);
+  if (result.ok) {
+    groups.forgetMeeting(dir, id);
+    tasks.forgetMeeting(dir, id);
+  }
+  return result;
+});
+ipcMain.handle('meetings:assign', (_e, { meetingId, projectId }) =>
+  groups.assignMeeting(outDir(), meetingId, projectId));
+ipcMain.handle('meetings:read', (_e, filePath) => library.readText(filePath));
+
+// Tarefas do Kanban.
+ipcMain.handle('tasks:list', (_e, projectId) => workspace.listTasks(outDir(), projectId));
+ipcMain.handle('tasks:save', (_e, task) => tasks.saveTask(outDir(), task));
+ipcMain.handle('tasks:move', (_e, { id, status }) => tasks.moveTask(outDir(), id, status));
+ipcMain.handle('tasks:delete', (_e, id) => tasks.deleteTask(outDir(), id));
+
+// Pipeline.
 ipcMain.handle('job:start', (_e, payload) => startJob(payload));
+ipcMain.handle('job:recording', (_e, payload) => startRecordingJob(payload));
 ipcMain.handle('job:cancel', () => cancelJob());
 
-ipcMain.handle('doc:start', (_e, payload) => startDocJob(payload));
+// Documentos: o front manda o id da reunião; aqui viram caminho e contexto.
+ipcMain.handle('doc:generate', (_e, { kind, meetingId }) => {
+  const dir = outDir();
+  const meeting = library.getMeeting(dir, meetingId);
+  if (!meeting || !meeting.transcript) {
+    return { started: false, message: 'Transcrição não encontrada.' };
+  }
+  return startDocJob({
+    kind,
+    transcriptPath: meeting.transcript,
+    context: meeting.group?.context || '',
+    meetingId,
+  });
+});
 ipcMain.handle('doc:cancel', () => cancelDocJob());
 
-// Biblioteca de transcrições (a pasta de saída é a fonte da verdade).
-ipcMain.handle('library:list', () => library.listMeetings(loadSettings().outputDir));
-ipcMain.handle('library:get', (_e, id) => {
-  const meeting = library.getMeeting(loadSettings().outputDir, id);
-  return meeting ? { ...meeting, preview: library.preview(meeting.transcript) } : null;
+// Chat por projeto — o RAG entra no M3 (embeddings + Vector DB).
+ipcMain.handle('chat:ask', (_e, { projectId }) => {
+  const reunioes = workspace.listMeetings(outDir(), projectId).length;
+  return {
+    answer: reunioes
+      ? `O chat ainda não está ligado à memória do projeto. Este projeto tem ${reunioes} reunião(ões) transcrita(s) prontas para indexar — a busca semântica entra no próximo módulo.`
+      : 'Este projeto ainda não tem reuniões. Grave ou importe uma para eu ter o que ler.',
+    sources: [],
+  };
 });
-ipcMain.handle('library:rename', (_e, { id, name }) =>
-  library.renameMeeting(loadSettings().outputDir, id, name));
-ipcMain.handle('library:delete', (_e, { id, files }) =>
-  library.deleteMeeting(loadSettings().outputDir, id, files));
-ipcMain.handle('library:read', (_e, filePath) => library.readText(filePath));
-
-// Grupos (projetos) e seus contextos.
-ipcMain.handle('groups:list', () => groups.listGroups(loadSettings().outputDir));
-ipcMain.handle('groups:save', (_e, group) => groups.saveGroup(loadSettings().outputDir, group));
-ipcMain.handle('groups:delete', (_e, groupId) =>
-  groups.deleteGroup(loadSettings().outputDir, groupId));
-ipcMain.handle('groups:assign', (_e, { meetingId, groupId }) =>
-  groups.assignMeeting(loadSettings().outputDir, meetingId, groupId));
 
 /** Salva uma cópia de um arquivo da reunião onde o usuário escolher. */
-ipcMain.handle('library:download', async (_e, filePath) => {
+ipcMain.handle('meetings:download', async (_e, filePath) => {
   if (!filePath || !fs.existsSync(filePath)) {
     return { ok: false, message: 'Arquivo não encontrado.' };
   }
@@ -510,6 +742,7 @@ ipcMain.handle('shell:openPath', (_e, filePath) => shell.openPath(filePath));
 // --- Ciclo de vida ----------------------------------------------------------
 
 app.whenReady().then(() => {
+  enableSystemAudioCapture();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

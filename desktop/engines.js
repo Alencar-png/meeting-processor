@@ -98,6 +98,10 @@ function buildNativeEnv({ cli, modelPath, language, threads }) {
     MEETING_WHISPER_LANGUAGE: language,
     MEETING_WHISPER_DEVICE: 'auto', // deixa o whisper.cpp usar a GPU
     MEETING_WHISPER_THREADS: String(threads || 0),
+    // Sem isto o Python escreve o stdout no code page do Windows: o nome de
+    // uma reunião acentuada chega corrompido e o caminho deixa de existir.
+    PYTHONUTF8: '1',
+    PYTHONIOENCODING: 'utf-8',
   };
 }
 

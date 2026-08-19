@@ -33,6 +33,29 @@ function findBrowser() {
 }
 
 /**
+ * Onde o Claude Code costuma estar instalado, na ordem de preferência.
+ *
+ * Depender só do PATH quebra quando o app é aberto pelo Explorer ou por um
+ * atalho: o processo herda um ambiente diferente do terminal, e o binário
+ * some. A variável CLAUDE_BIN cobre instalações fora do lugar padrão.
+ */
+function findClaude() {
+  const home = os.homedir();
+  const candidatos = [
+    process.env.CLAUDE_BIN,
+    path.join(home, '.local', 'bin', 'claude.exe'),
+    path.join(home, '.local', 'bin', 'claude'),
+    path.join(home, 'AppData', 'Local', 'Programs', 'claude', 'claude.exe'),
+  ].filter(Boolean);
+
+  const achado = candidatos.find((c) => {
+    try { return fs.existsSync(c); } catch { return false; }
+  });
+  // Sem caminho conhecido, ainda vale tentar pelo PATH do sistema.
+  return achado || 'claude';
+}
+
+/**
  * Bloco de contexto inserido no prompt.
  *
  * Sem contexto, o texto diz isso explicitamente: um placeholder vazio deixaria
@@ -76,6 +99,27 @@ function buildPrompt(kind, { transcriptPath, pdfPath, browser, context = '' }) {
     .replaceAll('{{HTML_TMP}}', htmlTmp)
     .replaceAll('{{EDGE}}', browser)
     .replaceAll('{{CONTEXTO}}', contextBlock(context));
+}
+
+/**
+ * Prompt da extração estruturada (AI-02): o Claude lê a transcrição e grava um
+ * JSON com as ações combinadas. Sai dados, não documento — o PDF continua
+ * sendo uma visualização gerada à parte.
+ */
+function buildExtractionPrompt({ transcriptPath, jsonPath, context = '' }) {
+  const template = fs.readFileSync(path.join(__dirname, 'prompts', 'extrair.md'), 'utf-8');
+  return template
+    .replaceAll('{{TRANSCRICAO}}', transcriptPath)
+    .replaceAll('{{JSON}}', jsonPath)
+    .replaceAll('{{CONTEXTO}}', contextBlock(context));
+}
+
+/** Onde o JSON temporário da extração é gravado. */
+function extractionPathFor(transcriptPath) {
+  return path.join(
+    os.tmpdir(),
+    `synapse-extracao-${path.basename(transcriptPath, path.extname(transcriptPath))}.json`,
+  );
 }
 
 /** Caminho do PDF gerado para uma transcrição. */
@@ -128,4 +172,14 @@ function describeEvent(event) {
   return null;
 }
 
-module.exports = { KINDS, buildClaudeArgs, buildPrompt, describeEvent, findBrowser, pdfPathFor };
+module.exports = {
+  KINDS,
+  findClaude,
+  buildClaudeArgs,
+  buildExtractionPrompt,
+  buildPrompt,
+  describeEvent,
+  extractionPathFor,
+  findBrowser,
+  pdfPathFor,
+};

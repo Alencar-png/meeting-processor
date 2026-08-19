@@ -1434,6 +1434,7 @@ $('process-cancel').addEventListener('click', () => {
 let docPhase = false;
 let docProgress = 0;
 let pendingMeetingId = '';
+let jobSummary = null;   // o que contar quando tudo terminar
 
 function enterDocPhase(meetingId) {
   docPhase = true;
@@ -1466,13 +1467,10 @@ window.api.on('job:event', async (event) => {
     $('process-stage').textContent = 'Transcrição pronta';
     await refreshAll();
     if (jobProjectId) openProject(jobProjectId, event.tasksCreated ? 'kanban' : 'meetings');
-    if (event.renamedTo) {
-      toast(`Reunião pronta como <strong>${event.renamedTo}</strong>`
-        + (event.tasksCreated ? ` — ${event.tasksCreated} tarefas no kanban` : ''));
-    } else if (event.tasksCreated) {
-      toast(`<strong>${event.tasksCreated} tarefas</strong> criadas no kanban`);
-    }
-    // Os documentos vêm em seguida: a tela segue aberta na próxima etapa.
+    // Nada de aviso agora: a tela de trabalho segue aberta para os documentos,
+    // e uma notificação por cima dela só atrapalharia. O que aconteceu aqui
+    // entra no aviso único do fim.
+    jobSummary = { renamedTo: event.renamedTo || '', tasksCreated: event.tasksCreated || 0 };
     setTimeout(() => enterDocPhase(event.meetingId), 700);
   } else if (event.event === 'error') {
     docPhase = false;
@@ -1510,8 +1508,15 @@ window.api.on('doc:done', async (result) => {
     return;
   }
 
+  // Um aviso só, no fim: nome, tarefas e documentos numa frase.
+  const partes = [];
+  if (jobSummary?.renamedTo) partes.push(`Reunião pronta como <strong>${jobSummary.renamedTo}</strong>`);
+  else partes.push('Reunião pronta');
+  if (jobSummary?.tasksCreated) partes.push(`<strong>${jobSummary.tasksCreated} tarefas</strong> no kanban`);
   const nomes = result.kinds.map((k) => (k === 'tarefas' ? 'tarefas' : 'resumo'));
-  toast(`<strong>${nomes.join(' e ')}</strong> em PDF prontos na reunião.`);
+  if (nomes.length) partes.push(`${nomes.join(' e ')} em PDF`);
+  jobSummary = null;
+  toast(partes.join(' · '));
   if (meetingId) openDrawer(meetingId);
 });
 

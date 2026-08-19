@@ -730,10 +730,9 @@ ipcMain.handle('projects:list', () => workspace.listProjects(outDir()));
 ipcMain.handle('projects:save', (_e, project) => projects.saveProject(outDir(), project));
 ipcMain.handle('projects:delete', (_e, projectId) => {
   const dir = outDir();
-  const result = projects.deleteProject(dir, projectId);
-  // As tarefas do projeto vão junto: sem projeto elas não teriam onde viver.
-  if (result.ok) tasks.forgetProject(dir, projectId);
-  return result;
+  // As tarefas do projeto vão junto — a cascata do banco cuida disso — e as
+  // reuniões apenas ficam sem projeto.
+  return projects.deleteProject(dir, projectId);
 });
 
 // Reuniões (a pasta de saída é a fonte da verdade).

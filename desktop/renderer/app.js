@@ -255,6 +255,84 @@ async function renderProjects() {
   else renderProjectsTable();
 }
 
+/**
+ * Menu de ações de um item.
+ *
+ * No cartão de projeto os botões ficavam soltos no canto e caíam por cima do
+ * nome. Aqui as ações moram atrás de um "⋯" na própria linha do título: o
+ * cartão fica limpo e nada se sobrepõe.
+ */
+let popmenuAnchor = null;
+
+function openPopmenu(botao, itens) {
+  const menu = $('popmenu');
+  menu.replaceChildren();
+
+  for (const item of itens) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = item.danger ? 'popmenu-item danger' : 'popmenu-item';
+    b.textContent = item.label;
+    b.addEventListener('click', () => {
+      closePopmenu();
+      item.onClick();
+    });
+    menu.append(b);
+  }
+
+  menu.hidden = false;
+  popmenuAnchor = botao;
+  botao.setAttribute('aria-expanded', 'true');
+
+  // Posição fixa ancorada no botão, virando para dentro quando falta espaço.
+  const r = botao.getBoundingClientRect();
+  const largura = menu.offsetWidth;
+  const altura = menu.offsetHeight;
+  const x = Math.min(r.right - largura, window.innerWidth - largura - 8);
+  const y = r.bottom + altura > window.innerHeight ? r.top - altura - 6 : r.bottom + 6;
+  menu.style.left = `${Math.max(8, x)}px`;
+  menu.style.top = `${y}px`;
+  menu.querySelector('button')?.focus();
+}
+
+function closePopmenu() {
+  const menu = $('popmenu');
+  if (menu.hidden) return;
+  menu.hidden = true;
+  popmenuAnchor?.setAttribute('aria-expanded', 'false');
+  popmenuAnchor = null;
+}
+
+window.addEventListener('pointerdown', (e) => {
+  if ($('popmenu').hidden) return;
+  if (e.target.closest('#popmenu') || e.target === popmenuAnchor) return;
+  closePopmenu();
+});
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closePopmenu(); });
+window.addEventListener('resize', closePopmenu);
+
+/** Botão "⋯" que abre as ações do projeto. */
+function projectMenuButton(p) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'card-menu';
+  b.textContent = '⋯';
+  b.title = `Ações de ${p.name}`;
+  b.setAttribute('aria-label', `Ações de ${p.name}`);
+  b.setAttribute('aria-haspopup', 'menu');
+  b.setAttribute('aria-expanded', 'false');
+  b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (popmenuAnchor === b) { closePopmenu(); return; }
+    openPopmenu(b, [
+      { label: 'Abrir', onClick: () => openProject(p.id, 'overview') },
+      { label: 'Editar', onClick: () => openProjectModal(p) },
+      { label: 'Excluir', danger: true, onClick: () => confirmDeleteProject(p) },
+    ]);
+  });
+  return b;
+}
+
 /** Botão pequeno de ação, usado no cartão e na linha da tabela. */
 function projectAction(label, title, onClick, extraClass = '') {
   const b = document.createElement('button');
@@ -297,7 +375,10 @@ function renderProjectsGrid() {
     const card = document.createElement('button');
     card.type = 'button';
     card.className = 'proj-card';
-    card.addEventListener('click', () => openProject(p.id, 'overview'));
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.card-menu')) return;
+      openProject(p.id, 'overview');
+    });
 
     const head = document.createElement('div');
     head.className = 'proj-card-head';
@@ -308,7 +389,7 @@ function renderProjectsGrid() {
     const name = document.createElement('span');
     name.className = 'proj-card-name';
     name.textContent = p.name;
-    head.append(glyph, name);
+    head.append(glyph, name, projectMenuButton(p));
 
     const ctx = document.createElement('p');
     ctx.className = 'proj-card-context';
@@ -328,14 +409,7 @@ function renderProjectsGrid() {
     when.title = p.lastMeetingAt ? 'Última reunião' : 'Nenhuma reunião ainda';
     foot.append(reun, tar, when);
 
-    const acts = document.createElement('div');
-    acts.className = 'proj-card-acts';
-    acts.append(
-      projectAction('editar', `Editar ${p.name}`, () => openProjectModal(p)),
-      projectAction('excluir', `Excluir ${p.name}`, () => confirmDeleteProject(p), 'danger'),
-    );
-
-    card.append(acts, head, ctx, foot);
+    card.append(head, ctx, foot);
     grid.append(card);
   }
 }

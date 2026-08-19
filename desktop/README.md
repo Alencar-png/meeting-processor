@@ -140,7 +140,8 @@ desktop/
     ├── index.html       # shell: sidebar, vistas, drawer, overlays
     ├── styles.css       # tema neural (azul-tinta, ciano, violeta)
     ├── app.js           # navegação, kanban, gravação, chat, pipeline
-    ├── neural.js        # rede neural dos overlays: é o progresso
+    ├── neural.js        # rede do hero, no Início
+    ├── network.js       # rede viva das telas de trabalho (interativa)
     ├── graph.js         # grafo força-dirigida (hero e projeto)
     └── mock-api.js      # backend simulado fora do Electron (inerte no app)
 ```

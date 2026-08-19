@@ -1054,9 +1054,17 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 .overlay-net {
   flex: none;
   width: min(560px, 80vw);
-  height: 150px;
-  margin-bottom: 6px;
+  height: 190px;
+  margin-bottom: 10px;
   pointer-events: none;
+}
+
+/* Enquanto o trabalho roda, a rede é brinquedo: arrastar empurra os neurônios,
+   clicar dispara sinais. Esperar fica menos parado. */
+.overlay-net.is-live {
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
 }
 
 .overlay-kicker {

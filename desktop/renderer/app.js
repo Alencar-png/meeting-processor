@@ -1246,7 +1246,7 @@ async function startRecording(preferido = '') {
     ? 'microfone + áudio do sistema'
     : 'somente microfone';
   $('overlay-record').hidden = false;
-  if (!recordNet) recordNet = window.createNeural($('record-net'));
+  if (!recordNet) recordNet = window.createNetwork($('record-net'));
   window.dispatchEvent(new Event('resize'));
   recordNet.setMode('dragging');
   recStartedAt = Date.now();
@@ -1322,9 +1322,8 @@ function startProcessing(label, projectId) {
   jobProjectId = projectId || '';
   $('process-stage').textContent = 'Iniciando';
   $('process-pct').textContent = '0%';
-  $('process-detail').textContent = label;
   $('overlay-process').hidden = false;
-  if (!processNet) processNet = window.createNeural($('process-net'));
+  if (!processNet) processNet = window.createNetwork($('process-net'));
   window.dispatchEvent(new Event('resize'));
   processNet.setMode('working');
   processNet.setProgress(0);
@@ -1339,11 +1338,9 @@ window.api.on('job:event', async (event) => {
     processNet?.setProgress(overall);
     $('process-pct').textContent = `${Math.round(overall * 100)}%`;
     $('process-stage').textContent = STAGE_LABELS[event.key] || event.label || '';
-    if (event.detail) $('process-detail').textContent = event.detail;
   } else if (event.event === 'done') {
     processNet?.setProgress(1);
     $('process-stage').textContent = 'Pronto';
-    $('process-detail').textContent = '';
     setTimeout(async () => {
       $('overlay-process').hidden = true;
       await refreshAll();

@@ -385,7 +385,8 @@
 
     <!-- ===== Overlays: gravação e processamento ===== -->
     <div class="overlay" id="overlay-record" hidden>
-      <canvas class="overlay-net" id="record-net" aria-hidden="true"></canvas>
+      <canvas class="overlay-net is-live" id="record-net"
+              aria-label="Rede em atividade — arraste e clique para brincar"></canvas>
       <p class="overlay-kicker">gravando para</p>
       <label class="overlay-field">
         <span class="sr-only">Projeto da gravação</span>
@@ -401,10 +402,10 @@
     </div>
 
     <div class="overlay" id="overlay-process" hidden>
-      <canvas class="overlay-net" id="process-net" aria-hidden="true"></canvas>
+      <canvas class="overlay-net is-live" id="process-net"
+              aria-label="Rede em atividade — arraste e clique para brincar"></canvas>
       <h1 class="overlay-title" id="process-stage">Processando</h1>
       <p class="overlay-clock"><span class="pct" id="process-pct">0%</span></p>
-      <p class="overlay-hint" id="process-detail"></p>
       <button class="btn ghost" id="process-cancel" type="button">Cancelar</button>
     </div>
 
@@ -413,6 +414,7 @@
 
   <script src="mock-api.js"></script>
   <script src="neural.js"></script>
+  <script src="network.js"></script>
   <script src="graph.js"></script>
   <script src="app.js"></script>
 </body>

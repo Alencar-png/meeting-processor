@@ -5,6 +5,7 @@
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'" />
   <title>Synapse</title>
+  <link rel="icon" href="../assets/icon.png" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -29,7 +30,6 @@
         <button class="nav-item" id="nav-projects-all" data-nav="projects" type="button">
           <span class="nav-glyph" aria-hidden="true">▦</span> Todos os projetos
         </button>
-        <div id="nav-projects"></div>
 
         <div class="nav-section"><span>Biblioteca</span></div>
         <button class="nav-item" id="nav-library" data-nav="library" type="button">
@@ -67,8 +67,9 @@
             <p>Grave ou importe uma reunião. O Synapse transcreve, resume,
                extrai tarefas e conecta tudo por projeto.</p>
             <div class="hero-actions">
-              <button class="btn solid" id="home-new-project" type="button">Criar projeto</button>
+              <button class="btn solid" id="home-record" type="button">● Iniciar gravação</button>
               <button class="btn ghost" id="home-import" type="button">Importar vídeo</button>
+              <button class="btn ghost" id="home-new-project" type="button">Criar projeto</button>
             </div>
           </div>
         </div>
@@ -374,7 +375,11 @@
     <!-- ===== Overlays: gravação e processamento ===== -->
     <div class="overlay" id="overlay-record" hidden>
       <canvas class="overlay-net" id="record-net" aria-hidden="true"></canvas>
-      <p class="overlay-kicker" id="record-project">projeto</p>
+      <p class="overlay-kicker">gravando para</p>
+      <label class="overlay-field">
+        <span class="sr-only">Projeto da gravação</span>
+        <select class="input" id="record-project"></select>
+      </label>
       <h1 class="overlay-title">Gravando reunião</h1>
       <p class="overlay-clock" id="record-clock">00:00</p>
       <p class="overlay-hint" id="record-fonte">microfone</p>

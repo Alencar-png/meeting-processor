@@ -105,102 +105,12 @@ function setTab(tab) {
 
 const TAB_LABELS = { overview: 'Visão geral', kanban: 'Kanban', meetings: 'Reuniões', graph: 'Grafo', chat: 'Chat' };
 
-/**
- * Projetos abertos na barra lateral. O projeto em que se está trabalhando abre
- * sozinho; os outros ficam recolhidos, para a lista não virar uma parede de
- * links quando houver muitos projetos.
- */
-const expandedProjects = new Set();
-
 function renderSidebar() {
   $('nav-home').classList.toggle('is-active', view === 'home');
-  $('nav-projects-all').classList.toggle('is-active', view === 'projects');
+  // O módulo cobre projeto individual também: sair dele não apaga a pista.
+  $('nav-projects-all').classList.toggle('is-active', view === 'projects' || view === 'project');
   $('nav-library').classList.toggle('is-active', view === 'library');
   $('nav-settings').classList.toggle('is-active', view === 'settings');
-
-  const box = $('nav-projects');
-  box.replaceChildren();
-
-  if (!projects.length) {
-    const vazio = document.createElement('p');
-    vazio.className = 'nav-empty';
-    vazio.textContent = 'Nenhum projeto ainda.';
-    box.append(vazio);
-    return;
-  }
-
-  for (const p of projects) {
-    const active = view === 'project' && p.id === currentProjectId;
-    if (active) expandedProjects.add(p.id);
-    const aberto = expandedProjects.has(p.id);
-
-    const linha = document.createElement('div');
-    linha.className = 'nav-proj';
-    if (active) linha.classList.add('is-active');
-
-    const caret = document.createElement('button');
-    caret.type = 'button';
-    caret.className = 'nav-caret';
-    caret.textContent = aberto ? '▾' : '▸';
-    caret.title = aberto ? 'Recolher' : 'Expandir';
-    caret.setAttribute('aria-expanded', String(aberto));
-    caret.setAttribute('aria-label', `${aberto ? 'Recolher' : 'Expandir'} ${p.name}`);
-    caret.addEventListener('click', () => {
-      if (aberto) expandedProjects.delete(p.id);
-      else expandedProjects.add(p.id);
-      renderSidebar();
-    });
-
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.className = 'nav-item';
-    const glyph = document.createElement('span');
-    glyph.className = 'nav-glyph';
-    glyph.setAttribute('aria-hidden', 'true');
-    glyph.textContent = '◈';
-    const name = document.createElement('span');
-    name.className = 'nav-proj-name';
-    name.textContent = p.name;
-    const count = document.createElement('span');
-    count.className = 'nav-proj-count';
-    count.textContent = p.openTasks ? `${p.openTasks}` : '';
-    if (p.openTasks) count.title = `${p.openTasks} tarefa(s) aberta(s)`;
-    item.append(glyph, name, count);
-    item.addEventListener('click', () => {
-      expandedProjects.add(p.id);
-      openProject(p.id, 'overview');
-    });
-
-    // Editar e excluir vivem no mesmo modal do "novo projeto".
-    const more = document.createElement('button');
-    more.type = 'button';
-    more.className = 'nav-more';
-    more.textContent = '⋯';
-    more.title = `Editar ${p.name}`;
-    more.setAttribute('aria-label', `Editar ${p.name}`);
-    more.addEventListener('click', () => openProjectModal(p));
-
-    linha.append(caret, item, more);
-    box.append(linha);
-
-    if (!aberto) continue;
-
-    const subs = document.createElement('div');
-    subs.className = 'nav-subs';
-    for (const [tab, label] of Object.entries(TAB_LABELS)) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'nav-sub';
-      if (active && tab === currentTab) b.classList.add('is-active');
-      b.textContent = label;
-      b.addEventListener('click', () => {
-        if (active) setTab(tab);
-        else openProject(p.id, tab);
-      });
-      subs.append(b);
-    }
-    box.append(subs);
-  }
 }
 
 async function refreshProjects() {
@@ -363,7 +273,6 @@ async function confirmDeleteProject(p) {
   const aviso = `Excluir "${p.name}"?\n\nAs reuniões continuam na biblioteca, apenas ficam sem projeto. As ${p.openTasks} tarefa(s) do kanban serão apagadas.`;
   if (!window.confirm(aviso)) return;
   await window.api.deleteProject(p.id);
-  expandedProjects.delete(p.id);
   await renderProjects();
   renderSidebar();
   toast(`Projeto <strong>${p.name}</strong> excluído.`);
@@ -1228,8 +1137,17 @@ function releaseAudio(contexto) {
   if (contexto) contexto.close();
 }
 
-$('top-record').addEventListener('click', async () => {
+/**
+ * Começa a gravar.
+ *
+ * O projeto é escolhido na própria tela de gravação: daqui do Início não há
+ * um projeto em foco, e sem projeto as tarefas extraídas não teriam kanban
+ * onde cair. `preferido` apenas deixa o seletor já na opção certa quando a
+ * gravação parte de dentro de um projeto.
+ */
+async function startRecording(preferido = '') {
   if (!engineReady) { toast('O motor de transcrição não está disponível.'); return; }
+  if (recorder) { toast('Já existe uma gravação em andamento.'); return; }
 
   const captura = await captureAudio();
   if (!captura) {
@@ -1243,8 +1161,20 @@ $('top-record').addEventListener('click', async () => {
   recorder.onstop = () => releaseAudio(captura.contexto);
   recorder.start(1000);   // um bloco por segundo: perda máxima de 1s se travar
 
-  const p = projects.find((x) => x.id === currentProjectId);
-  $('record-project').textContent = p ? p.name : '';
+  const select = $('record-project');
+  select.replaceChildren();
+  const semProjeto = document.createElement('option');
+  semProjeto.value = '';
+  semProjeto.textContent = projects.length ? 'Sem projeto' : 'Sem projeto — crie um para gerar tarefas';
+  select.append(semProjeto);
+  for (const p of projects) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name;
+    select.append(opt);
+  }
+  select.value = preferido || '';
+
   $('record-clock').textContent = '00:00';
   $('record-fonte').textContent = captura.sistema
     ? 'microfone + áudio do sistema'
@@ -1257,7 +1187,10 @@ $('top-record').addEventListener('click', async () => {
   recTimer = setInterval(() => {
     $('record-clock').textContent = clock((Date.now() - recStartedAt) / 1000);
   }, 500);
-});
+}
+
+$('top-record').addEventListener('click', () => startRecording(currentProjectId));
+$('home-record').addEventListener('click', () => startRecording(currentProjectId));
 
 function stopRecordingUI() {
   clearInterval(recTimer);
@@ -1292,7 +1225,8 @@ $('record-stop').addEventListener('click', async () => {
   if (!blob) { toast('A gravação saiu vazia.'); return; }
 
   const name = `Reunião ${fmtDate(Date.now())} ${new Date().getHours()}h${pad(new Date().getMinutes())}`;
-  startProcessing(name, currentProjectId);
+  const projectId = $('record-project').value;
+  startProcessing(name, projectId);
 
   const result = await window.api.processRecording({
     projectId: currentProjectId,

@@ -164,6 +164,7 @@ function createWindow() {
     minHeight: 660,
     backgroundColor: '#070A14',
     title: 'Synapse',
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

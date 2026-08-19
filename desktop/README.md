@@ -112,6 +112,10 @@ A pasta de saída é a fonte da verdade — não há banco paralelo:
 
 ```
 desktop/
+├── assets/              # marca do app
+│   ├── icon.svg         # fonte do ícone (neurônio disparando)
+│   ├── icon.ico         # janela e barra de tarefas no Windows
+│   └── icon.png         # 512px, para empacotamento e outras plataformas
 ├── main.js              # janela, IPC, pipeline, gravação e extração
 ├── engines.js           # os dois motores: nativo (GPU) e container (CPU)
 ├── docker-args.js       # montagem do comando do container

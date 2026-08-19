@@ -297,6 +297,7 @@ a:hover { color: var(--mint); }
 
 .btn {
   padding: 9px 20px;
+  white-space: nowrap;
   border-radius: 999px;
   font-family: var(--display);
   font-size: 12px;
@@ -397,7 +398,7 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 
 .hero-net { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0.75; }
 
-.hero-copy { position: relative; max-width: 480px; }
+.hero-copy { position: relative; max-width: 560px; }
 
 .hero-copy h1 {
   margin: 0 0 10px;
@@ -1087,6 +1088,21 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
   font-variant-numeric: tabular-nums;
 }
 .overlay-clock .pct { color: var(--cyan); text-shadow: 0 0 16px rgba(83, 213, 253, 0.45); }
+
+/* Seletor de projeto dentro da tela de gravação. */
+.overlay-field { display: block; }
+.overlay-field .input { min-width: 220px; text-align: center; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 
 .overlay-hint {
   margin: 0;

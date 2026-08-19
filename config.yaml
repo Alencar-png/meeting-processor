@@ -32,7 +32,7 @@ retry_delay_seconds: 30.0
 #   "openai" -> openai-whisper puro Python; baixa o modelo sozinho (mais simples)
 #   "cpp"    -> força whisper.cpp (mais rápido com GPU; requer binário + modelo .bin)
 whisper_backend: "auto"
-whisper_model: "large"
+whisper_model: "large-v3-turbo"
 whisper_language: "pt"
 # "auto" deixa a lib decidir; "cuda" força GPU; "cpu" força CPU
 # (no whisper.cpp, "cpp", isso adiciona --no-gpu).

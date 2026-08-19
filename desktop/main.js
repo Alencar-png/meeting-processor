@@ -50,7 +50,7 @@ const MEDIA_EXTENSIONS = [
 const DEFAULT_SETTINGS = {
   outputDir: path.join(app.getPath('documents'), 'Transcricoes'),
   engine: 'native',    // 'native' (GPU) ou 'docker' (CPU)
-  model: 'small',      // modelo do motor docker
+  model: 'large-v3-turbo',   // modelo do motor docker
   nativeModel: '',     // caminho do .bin escolhido no motor nativo
   language: 'pt',
   formats: ['md', 'txt'],

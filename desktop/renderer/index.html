@@ -58,23 +58,18 @@
       <!-- ---- Início ---- -->
       <section class="view view-home">
         <div class="hero">
-          <div class="hero-net-wrap">
-            <canvas class="hero-net" id="hero-net"
-                    aria-label="Rede dos seus projetos e reuniões"></canvas>
-            <p class="hero-empty" id="hero-empty" hidden>
-              Sua rede começa na primeira reunião.
-            </p>
-          </div>
-          <div class="hero-side">
-            <p class="eyebrow">Sua rede</p>
-            <dl class="ledger" id="home-ledger"></dl>
+          <canvas class="hero-net" id="hero-net" aria-hidden="true"></canvas>
+          <div class="hero-copy">
+            <h1>Seu segundo cérebro<br />para reuniões</h1>
+            <p>Grave ou importe uma reunião. O Synapse transcreve, resume,
+               extrai tarefas e conecta tudo por projeto.</p>
             <div class="hero-actions">
-              <button class="btn solid" id="home-import" type="button">Importar vídeo</button>
-              <button class="btn ghost" id="home-new-project" type="button">Criar projeto</button>
+              <button class="btn solid" id="home-new-project" type="button">Criar projeto</button>
+              <button class="btn ghost" id="home-import" type="button">Importar vídeo</button>
             </div>
-            <p class="hero-note" id="home-note"></p>
           </div>
         </div>
+        <div class="stat-grid" id="home-stats"></div>
         <div class="home-cols">
           <div class="card">
             <div class="card-head"><h2>Projetos</h2></div>
@@ -154,7 +149,7 @@
           <div class="chat">
             <div class="chat-thread" id="chat-thread"></div>
             <form class="chat-bar" id="chat-form">
-              <input class="chat-input" id="chat-input" type="text" autocomplete="off"
+              <input class="input chat-input" id="chat-input" type="text" autocomplete="off"
                      placeholder="Pergunte sobre as reuniões e tarefas deste projeto…" />
               <button class="btn solid" type="submit">Enviar</button>
             </form>

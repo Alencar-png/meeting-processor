@@ -55,7 +55,8 @@ function toast(html) {
 
 // --- Redes neurais (canvas) -----------------------------------------------------
 
-let heroGraph = null;
+const heroNet = window.createNeural($('hero-net'));
+heroNet.setMode('idle');
 let recordNet = null;
 let processNet = null;
 
@@ -76,8 +77,6 @@ function setView(next) {
     project: `Projetos / ${projects.find((p) => p.id === currentProjectId)?.name || ''}`,
   }[next];
   if (graph && next !== 'project') graph.stop();
-  // Fora do Início a rede do hero não é vista: parar poupa CPU da simulação.
-  if (heroGraph && next !== 'home') heroGraph.stop();
 }
 
 async function openProject(id, tab = currentTab || 'overview') {
@@ -104,6 +103,13 @@ function setTab(tab) {
 
 const TAB_LABELS = { overview: 'Visão geral', kanban: 'Kanban', meetings: 'Reuniões', graph: 'Grafo', chat: 'Chat' };
 
+/**
+ * Projetos abertos na barra lateral. O projeto em que se está trabalhando abre
+ * sozinho; os outros ficam recolhidos, para a lista não virar uma parede de
+ * links quando houver muitos projetos.
+ */
+const expandedProjects = new Set();
+
 function renderSidebar() {
   $('nav-home').classList.toggle('is-active', view === 'home');
   $('nav-library').classList.toggle('is-active', view === 'library');
@@ -111,36 +117,86 @@ function renderSidebar() {
 
   const box = $('nav-projects');
   box.replaceChildren();
+
+  if (!projects.length) {
+    const vazio = document.createElement('p');
+    vazio.className = 'nav-empty';
+    vazio.textContent = 'Nenhum projeto ainda.';
+    box.append(vazio);
+    return;
+  }
+
   for (const p of projects) {
+    const active = view === 'project' && p.id === currentProjectId;
+    if (active) expandedProjects.add(p.id);
+    const aberto = expandedProjects.has(p.id);
+
+    const linha = document.createElement('div');
+    linha.className = 'nav-proj';
+    if (active) linha.classList.add('is-active');
+
+    const caret = document.createElement('button');
+    caret.type = 'button';
+    caret.className = 'nav-caret';
+    caret.textContent = aberto ? '▾' : '▸';
+    caret.title = aberto ? 'Recolher' : 'Expandir';
+    caret.setAttribute('aria-expanded', String(aberto));
+    caret.setAttribute('aria-label', `${aberto ? 'Recolher' : 'Expandir'} ${p.name}`);
+    caret.addEventListener('click', () => {
+      if (aberto) expandedProjects.delete(p.id);
+      else expandedProjects.add(p.id);
+      renderSidebar();
+    });
+
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'nav-item';
-    const active = view === 'project' && p.id === currentProjectId;
-    if (active) item.classList.add('is-active');
-    item.innerHTML = `<span class="nav-glyph" aria-hidden="true">◈</span>`;
+    const glyph = document.createElement('span');
+    glyph.className = 'nav-glyph';
+    glyph.setAttribute('aria-hidden', 'true');
+    glyph.textContent = '◈';
     const name = document.createElement('span');
+    name.className = 'nav-proj-name';
     name.textContent = p.name;
     const count = document.createElement('span');
     count.className = 'nav-proj-count';
     count.textContent = p.openTasks ? `${p.openTasks}` : '';
-    item.append(name, count);
-    item.addEventListener('click', () => openProject(p.id, 'overview'));
-    box.append(item);
+    if (p.openTasks) count.title = `${p.openTasks} tarefa(s) aberta(s)`;
+    item.append(glyph, name, count);
+    item.addEventListener('click', () => {
+      expandedProjects.add(p.id);
+      openProject(p.id, 'overview');
+    });
 
-    if (active) {
-      const subs = document.createElement('div');
-      subs.className = 'nav-subs';
-      for (const [tab, label] of Object.entries(TAB_LABELS)) {
-        const b = document.createElement('button');
-        b.type = 'button';
-        b.className = 'nav-sub';
-        if (tab === currentTab) b.classList.add('is-active');
-        b.textContent = label;
-        b.addEventListener('click', () => setTab(tab));
-        subs.append(b);
-      }
-      box.append(subs);
+    // Editar e excluir vivem no mesmo modal do "novo projeto".
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'nav-more';
+    more.textContent = '⋯';
+    more.title = `Editar ${p.name}`;
+    more.setAttribute('aria-label', `Editar ${p.name}`);
+    more.addEventListener('click', () => openProjectModal(p));
+
+    linha.append(caret, item, more);
+    box.append(linha);
+
+    if (!aberto) continue;
+
+    const subs = document.createElement('div');
+    subs.className = 'nav-subs';
+    for (const [tab, label] of Object.entries(TAB_LABELS)) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'nav-sub';
+      if (active && tab === currentTab) b.classList.add('is-active');
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        if (active) setTab(tab);
+        else openProject(p.id, tab);
+      });
+      subs.append(b);
     }
+    box.append(subs);
   }
 }
 
@@ -205,24 +261,15 @@ function emptyNote(text) {
 async function renderHome() {
   const meetings = await window.api.listMeetings();
   const allTasks = (await Promise.all(projects.map((p) => window.api.listTasks(p.id)))).flat();
-  const abertas = allTasks.filter((t) => t.status !== 'done').length;
   const horas = meetings.reduce((s, m) => s + (m.duration || 0), 0) / 3600;
 
-  renderHeroGraph(meetings);
-
-  // Uma régua, não quatro cartões: o áudio acumulado é o número que resume o
-  // acervo; projetos, reuniões e tarefas são a leitura de apoio.
-  $('home-ledger').replaceChildren(
-    ledgerRow('áudio transcrito', horas >= 1 ? `${horas.toFixed(1)}h` : `${Math.round(horas * 60)}min`, true),
-    ledgerRow('reuniões', meetings.length),
-    ledgerRow('projetos', projects.length),
-    ledgerRow('tarefas abertas', abertas),
+  const stats = $('home-stats');
+  stats.replaceChildren(
+    statCard(projects.length, 'projetos', 'mint'),
+    statCard(meetings.length, 'reuniões'),
+    statCard(allTasks.filter((t) => t.status !== 'done').length, 'tarefas abertas', 'violet'),
+    statCard(`${horas.toFixed(1)}h`, 'de áudio transcrito'),
   );
-
-  const ultima = meetings[0];
-  $('home-note').textContent = ultima
-    ? `Última reunião: ${ultima.name} · ${fmtDate(ultima.recordedAt)}`
-    : 'Solte um vídeo em qualquer lugar da janela para transcrever.';
 
   const pj = $('home-projects');
   pj.replaceChildren();
@@ -249,54 +296,6 @@ async function renderHome() {
   rec.replaceChildren();
   if (!meetings.length) rec.append(emptyNote('Nenhuma reunião ainda. Importe um vídeo para começar.'));
   for (const m of meetings.slice(0, 5)) rec.append(meetingTile(m, { showProject: true }));
-}
-
-function ledgerRow(label, value, lead = false) {
-  const row = document.createElement('div');
-  if (lead) row.className = 'lead';
-  const dt = document.createElement('dt');
-  dt.textContent = label;
-  const dd = document.createElement('dd');
-  dd.textContent = value;
-  row.append(dt, dd);
-  return row;
-}
-
-/**
- * A rede do hero é o acervo inteiro: cada projeto e cada reunião viram nó, e a
- * aresta é o vínculo entre eles. Clicar num nó abre o item — é navegação, não
- * ilustração.
- */
-function renderHeroGraph(meetings) {
-  const vazio = !meetings.length && !projects.length;
-  $('hero-empty').hidden = !vazio;
-  if (vazio) {
-    heroGraph?.stop();
-    return;
-  }
-
-  const nodes = projects.map((p) => ({ id: `p:${p.id}`, type: 'project', label: p.name, ref: p.id }));
-  const edges = [];
-
-  for (const m of meetings) {
-    nodes.push({ id: `m:${m.id}`, type: 'meeting', label: elide(m.name, 22), ref: m.id });
-    if (m.projectId) edges.push({ from: `p:${m.projectId}`, to: `m:${m.id}` });
-  }
-
-  if (!heroGraph) {
-    heroGraph = window.createGraph($('hero-net'), {
-      onOpen: (node) => {
-        if (node.type === 'meeting') openDrawer(node.ref);
-        if (node.type === 'project') openProject(node.ref, 'overview');
-      },
-    });
-  }
-  heroGraph.start();
-  heroGraph.setData({ nodes, edges });
-}
-
-function elide(text, max) {
-  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 // --- Projeto: visão geral -----------------------------------------------------------
@@ -728,23 +727,58 @@ function closeDrawer() {
 }
 
 /** Destaca ocorrências sem interpretar HTML. */
+/**
+ * Leitor da transcrição.
+ *
+ * O arquivo é Markdown: mostrar a marcação crua ("**[00:12]**") faz o texto
+ * parecer código. Aqui o horário vira uma etiqueta discreta e a fala fica como
+ * texto — sem interpretar Markdown completo, que seria mais superfície do que
+ * esta tela precisa.
+ */
 function renderReader(text, termo) {
   const out = $('drawer-text');
   out.replaceChildren();
   const busca = termo.trim().toLowerCase();
-  if (!busca) { out.textContent = text; return; }
-  const fonte = text.toLowerCase();
-  let cursor = 0;
-  let hit = fonte.indexOf(busca);
-  while (hit !== -1) {
-    out.append(document.createTextNode(text.slice(cursor, hit)));
-    const mark = document.createElement('mark');
-    mark.textContent = text.slice(hit, hit + busca.length);
-    out.append(mark);
-    cursor = hit + busca.length;
-    hit = fonte.indexOf(busca, cursor);
+
+  const escrever = (destino, trecho) => {
+    if (!busca) { destino.append(document.createTextNode(trecho)); return; }
+    const fonte = trecho.toLowerCase();
+    let cursor = 0;
+    let hit = fonte.indexOf(busca);
+    while (hit !== -1) {
+      destino.append(document.createTextNode(trecho.slice(cursor, hit)));
+      const mark = document.createElement('mark');
+      mark.textContent = trecho.slice(hit, hit + busca.length);
+      destino.append(mark);
+      cursor = hit + busca.length;
+      hit = fonte.indexOf(busca, cursor);
+    }
+    destino.append(document.createTextNode(trecho.slice(cursor)));
+  };
+
+  for (const linha of text.split('\n')) {
+    const limpa = linha.trim();
+    // O cabeçalho e os metadados do arquivo já aparecem no topo do painel.
+    if (!limpa || limpa === '---' || limpa.startsWith('# ')) continue;
+    if (/^\*\*[^*]+:\*\*/.test(limpa)) continue;
+
+    const fala = limpa.match(/^\*\*\[(\d{2}:\d{2}(?::\d{2})?)\]\*\*\s*(.*)$/);
+    const p = document.createElement('p');
+    p.className = 'reader-line';
+    if (fala) {
+      const hora = document.createElement('span');
+      hora.className = 'reader-time';
+      hora.textContent = fala[1];
+      p.append(hora);
+      escrever(p, fala[2]);
+    } else {
+      escrever(p, limpa.replace(/\*\*/g, ''));
+    }
+    out.append(p);
   }
-  out.append(document.createTextNode(text.slice(cursor)));
+
+  // Formato inesperado: melhor o texto cru do que uma tela vazia.
+  if (!out.childElementCount) escrever(out, text);
 }
 
 $('drawer-search').addEventListener('input', () => renderReader(drawerTranscript, $('drawer-search').value));

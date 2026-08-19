@@ -34,6 +34,23 @@ _PROGRESS_RE = re.compile(r"progress\s*=\s*(\d+)\s*%")
 _VULKAN_DEVICE_RE = re.compile(r"ggml_vulkan:\s*\d+\s*=\s*([^|]+?)\s*\|")
 
 
+def summarize_cli_error(stderr: str, limit: int = 300) -> str:
+    """Extrai do stderr do whisper.cpp a parte que explica a falha.
+
+    O whisper.cpp abre o stderr com um preâmbulo longo sobre os devices
+    Vulkan encontrados, e a causa real ("error: input file not found", por
+    exemplo) sai bem depois. Cortar os primeiros caracteres, como fazíamos,
+    mostrava só o preâmbulo — um relatório de hardware no lugar do erro.
+    """
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    errors = [line for line in lines if line.lower().startswith(("error", "failed", "whisper_"))]
+    relevant = errors or lines[-3:]
+    message = " | ".join(relevant)
+    if not message:
+        return "sem saída de erro"
+    return message if len(message) <= limit else message[:limit] + "..."
+
+
 def resolve_whisper_cli(config: Settings) -> Path | None:
     """Localiza o executável do whisper.cpp de forma portável.
 
@@ -270,8 +287,8 @@ class WhisperTranscriber:
                     f"Transcrição excedeu o tempo limite ({timeout:.0f}s) "
                     f"em {audio_path.name}."
                 )
-            logger.error("Erro no whisper-cli: %s", stderr[:500])
-            raise RuntimeError(f"whisper-cli falhou: {stderr[:200]}")
+            logger.error("Erro no whisper-cli: %s", stderr[-2000:])
+            raise RuntimeError(f"whisper-cli falhou: {summarize_cli_error(stderr)}")
 
         return stdout, stderr
 
@@ -334,7 +351,8 @@ class WhisperTranscriber:
                 json_path.unlink()
             else:
                 raise RuntimeError(
-                    f"whisper-cli nao gerou saida JSON valida: {stderr[:200]}"
+                    "whisper-cli nao gerou saida JSON valida: "
+                    f"{summarize_cli_error(stderr)}"
                 ) from None
 
         # Extrair segmentos

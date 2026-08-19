@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from .config import Settings
+from .utils import ascii_slug
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +76,11 @@ def extract_audio(video_path: Path, config: Settings) -> Path:
     # Nome do WAV inclui um hash curto do caminho completo do vídeo. Assim
     # dois vídeos de mesmo nome (em pastas diferentes) processados em paralelo
     # não colidem no mesmo arquivo temporário.
+    # O nome base é reduzido a ASCII porque o whisper-cli não abre caminhos
+    # acentuados no Windows (recebe argv na code page ANSI); o hash mantém a
+    # unicidade mesmo quando dois nomes diferentes achatam para o mesmo slug.
     path_hash = hashlib.sha256(str(video_path).encode("utf-8")).hexdigest()[:8]
-    output_path = config.temp_path / f"{video_path.stem}.{path_hash}.wav"
+    output_path = config.temp_path / f"{ascii_slug(video_path.stem)}.{path_hash}.wav"
     config.temp_path.mkdir(parents=True, exist_ok=True)
 
     logger.info("Extraindo áudio de %s...", video_path.name)

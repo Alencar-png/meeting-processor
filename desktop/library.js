@@ -13,6 +13,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const projects = require('./projects');
+const { toNFC } = require('./unicode-path');
 
 const TRANSCRIPT_EXTENSIONS = ['.md', '.txt'];
 const DOCUMENT_EXTENSIONS = ['.pdf'];
@@ -195,13 +196,31 @@ function renameFiles(moves) {
 }
 
 /**
+ * Troca o nome antigo pelo novo dentro do nome do arquivo, preservando o
+ * sufixo (" - Tarefas.pdf") e a extensão.
+ *
+ * Compara em NFC porque o nome no disco e o nome em memória podem estar em
+ * formas Unicode diferentes; um `replace` direto não casaria, e o arquivo
+ * ficaria com o nome antigo dentro da pasta já renomeada.
+ */
+function renamedFile(fileName, oldName, newName) {
+  const alvo = toNFC(fileName);
+  const antigo = toNFC(oldName);
+  return alvo.startsWith(antigo) ? newName + alvo.slice(antigo.length) : alvo;
+}
+
+
+/**
  * Renomeia a reunião: a pasta e os arquivos dentro dela.
  *
  * Recusa nome inválido ou já ocupado — melhor falhar visível do que
  * sobrescrever a transcrição de outra reunião.
  */
 function renameMeeting(dir, id, newName) {
-  const clean = (newName || '').trim();
+  // NFC antes de qualquer comparação: um nome digitado e o mesmo nome vindo de
+  // uma gravação do macOS podem ser strings diferentes para o mesmo texto, e
+  // aí o `replace` abaixo não casaria com o nome do arquivo no disco.
+  const clean = toNFC(newName || '').trim();
   if (!clean) return { ok: false, message: 'O nome não pode ficar vazio.' };
   if (INVALID_CHARS.test(clean)) {
     return { ok: false, message: 'O nome não pode conter < > : " / \\ | ? *' };
@@ -210,17 +229,17 @@ function renameMeeting(dir, id, newName) {
   const existing = listMeetings(dir);
   const meeting = existing.find((m) => m.id === id);
   if (!meeting) return { ok: false, message: 'Transcrição não encontrada.' };
-  if (clean === meeting.name) return { ok: true, id: clean };
+  if (clean === toNFC(meeting.name)) return { ok: true, id: meeting.name };
 
   // Conflito é com qualquer reunião de mesmo nome — pasta ou arquivos soltos.
-  if (existing.some((m) => m.id === clean)) {
+  if (existing.some((m) => toNFC(m.id) === clean)) {
     return { ok: false, message: `Já existe uma transcrição chamada ${clean}.` };
   }
 
   if (meeting.legacy) {
     const moves = meeting.files.map((file) => ({
       from: file.path,
-      to: path.join(dir, file.name.replace(meeting.name, clean)),
+      to: path.join(dir, renamedFile(file.name, meeting.name, clean)),
     }));
     const conflict = moves.find((m) => m.from !== m.to && fs.existsSync(m.to));
     if (conflict) {
@@ -240,7 +259,7 @@ function renameMeeting(dir, id, newName) {
   // falha no meio deixa tudo no lugar de origem.
   const moves = meeting.files.map((file) => ({
     from: file.path,
-    to: path.join(meeting.dir, file.name.replace(meeting.name, clean)),
+    to: path.join(meeting.dir, renamedFile(file.name, meeting.name, clean)),
   }));
   const result = renameFiles(moves);
   if (!result.ok) return result;
@@ -310,5 +329,6 @@ module.exports = {
   listMeetings,
   preview,
   readText,
+  renamedFile,
   renameMeeting,
 };

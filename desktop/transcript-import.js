@@ -13,6 +13,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { toNFC } = require('./unicode-path');
+
 const EXTENSIONS = ['txt', 'md', 'srt', 'vtt'];
 
 // Caracteres proibidos em nome de arquivo no Windows.
@@ -114,7 +116,10 @@ function importTranscript({ filePath, outputDir, name, language = 'pt' }) {
     return { ok: false, message: `Formato .${ext} não é uma transcrição (use ${EXTENSIONS.join(', ')}).` };
   }
 
-  const nome = (name || path.basename(filePath, path.extname(filePath))).trim();
+  // NFC pela mesma razão do resto do app: um nome vindo do macOS chega com os
+  // acentos decompostos, e a pasta criada assim vira invisível para quem
+  // depois procura a forma composta.
+  const nome = toNFC(name || path.basename(filePath, path.extname(filePath))).trim();
   if (!nome) return { ok: false, message: 'Dê um nome à reunião.' };
   if (INVALID_CHARS.test(nome)) {
     return { ok: false, message: 'O nome não pode conter < > : " / \\ | ? *' };

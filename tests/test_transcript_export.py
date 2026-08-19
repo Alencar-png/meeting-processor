@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import unicodedata
+
 import pytest
 
 from meeting_processor.transcript_export import export, safe_stem, to_markdown, to_txt
@@ -72,3 +74,44 @@ def test_export_cria_a_pasta_de_saida(tmp_path, sample_transcript):
 def test_export_rejeita_formato_desconhecido(tmp_path, sample_transcript):
     with pytest.raises(ValueError, match="Formato não suportado"):
         export(sample_transcript, tmp_path, "reuniao.mp4", ["pdf"])
+
+
+def test_safe_stem_compoe_acentos_decompostos():
+    """Gravações do macOS chegam em NFD; o disco precisa receber NFC.
+
+    Sem isso, o nome no disco fica com o acento separado da letra, e qualquer
+    ferramenta que normalize ao gravar (o Claude Code, por exemplo) cria um
+    arquivo que o app não encontra mais.
+    """
+    decomposto = unicodedata.normalize("NFD", "Daily - IRM - 2026-08-19 às 10.18")
+    stem = safe_stem(decomposto)
+
+    assert stem == unicodedata.normalize("NFC", "Daily - IRM - 2026-08-19 às 10.18")
+    # A comparação acima passaria se as duas formas fossem iguais; não são.
+    assert stem != decomposto
+    assert stem == unicodedata.normalize("NFC", stem)
+
+
+def test_export_grava_pasta_e_arquivos_em_nfc(tmp_path, sample_transcript):
+    """A pasta e os arquivos da reunião nascem compostos, não decompostos."""
+    nome = unicodedata.normalize("NFD", "Reunião às 10h")
+    escritos = export(sample_transcript, tmp_path, "video.mp4", ("md",), name=nome)
+
+    pasta = escritos[0].parent
+    assert pasta.name == unicodedata.normalize("NFC", "Reunião às 10h")
+    assert escritos[0].name == unicodedata.normalize("NFC", "Reunião às 10h.md")
+    # E o arquivo é encontrável pelo caminho composto — o que o app usa.
+    assert (tmp_path / "Reunião às 10h" / "Reunião às 10h.md").exists()
+
+
+def test_safe_stem_preserva_ponto_que_nao_e_extensao():
+    """O ponto da hora não é extensão: cortá-lo comia o final do nome."""
+    assert safe_stem("Daily - IRM - 2026-08-19 as 10.18.33") == (
+        "Daily - IRM - 2026-08-19 as 10.18.33"
+    )
+    assert safe_stem("v1.2 do produto") == "v1.2 do produto"
+
+
+def test_safe_stem_ainda_remove_extensao_de_midia():
+    assert safe_stem("Gravacao de Tela as 10.18.33.mov") == "Gravacao de Tela as 10.18.33"
+    assert safe_stem("reuniao.MKV") == "reuniao"

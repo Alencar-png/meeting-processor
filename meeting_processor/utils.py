@@ -7,7 +7,13 @@ parsing de timestamps, escrita atômica) para evitar duplicação — DRY.
 from __future__ import annotations
 
 import os
+import re
+import unicodedata
 from pathlib import Path
+
+# Caracteres aceitos em nomes de arquivos temporários passados a
+# executáveis externos (ffmpeg, whisper-cli).
+_UNSAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None:
@@ -50,3 +56,18 @@ def parse_timestamp(ts: str) -> float:
         h, m, s = parts
         return int(h) * 3600 + int(m) * 60 + float(s)
     return 0.0
+
+
+def ascii_slug(text: str, fallback: str = "audio") -> str:
+    """Reduz um texto a ASCII seguro para nome de arquivo temporário.
+
+    Existe porque executáveis externos no Windows recebem os argumentos na
+    code page ANSI: um nome com acentos (comum em gravações vindas do macOS,
+    que ainda usam Unicode decomposto) chega corrompido ao whisper-cli e ele
+    responde "input file not found". Como o nome do temporário já carrega um
+    hash do caminho original, achatar os acentos não cria risco de colisão.
+    """
+    normalized = unicodedata.normalize("NFKD", text)
+    without_marks = "".join(c for c in normalized if not unicodedata.combining(c))
+    slug = _UNSAFE_CHARS_RE.sub("_", without_marks).strip("._-")
+    return slug or fallback

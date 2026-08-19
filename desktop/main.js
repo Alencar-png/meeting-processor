@@ -39,6 +39,7 @@ const projects = require('./projects');
 const tasks = require('./tasks');
 const workspace = require('./workspace');
 const transcriptImport = require('./transcript-import');
+const { readFileTolerant, unlinkTolerant } = require('./unicode-path');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
@@ -454,7 +455,7 @@ async function finishJob(event, outputDir, projectId, autoName = false) {
 function extractTasks({ meetingId, projectId, transcriptPath, context }) {
   return new Promise((resolve) => {
     const jsonPath = extractionPathFor(transcriptPath);
-    try { fs.unlinkSync(jsonPath); } catch { /* não existia */ }
+    unlinkTolerant(jsonPath);   // sobra de uma tentativa anterior
 
     let prompt;
     try {
@@ -495,19 +496,32 @@ function extractTasks({ meetingId, projectId, transcriptPath, context }) {
       currentExtraction = null;
       let dados = null;
       try {
-        dados = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-      } catch {
-        resolve({ created: 0, message: 'A extração não devolveu um JSON legível.' });
+        // Tolerante à normalização do Unicode: o Claude grava o nome em NFC
+        // mesmo quando recebeu o caminho em NFD, e aí o arquivo "desaparece"
+        // para quem procura exatamente a forma que enviou.
+        dados = JSON.parse(readFileTolerant(jsonPath));
+      } catch (err) {
+        resolve({ created: 0, message: `a extração não devolveu um JSON legível (${err.message}).` });
         return;
       }
-      try { fs.unlinkSync(jsonPath); } catch { /* já apagado */ }
+      unlinkTolerant(jsonPath);
 
+      const items = Array.isArray(dados.tasks) ? dados.tasks : [];
       const { created } = tasks.createFromExtraction(loadSettings().outputDir, {
         projectId,
         meetingId,
-        items: Array.isArray(dados.tasks) ? dados.tasks : [],
+        items,
       });
-      resolve({ created, title: typeof dados.title === 'string' ? dados.title.trim() : '' });
+      // Extraiu ações mas nenhuma entrou no Kanban: sem isto o silêncio se
+      // parece com "a reunião não gerou tarefas", e o trabalho se perde.
+      const message = items.length && !created
+        ? `${items.length} ação(ões) extraída(s) não puderam ser gravadas no Kanban.`
+        : '';
+      resolve({
+        created,
+        message,
+        title: typeof dados.title === 'string' ? dados.title.trim() : '',
+      });
     });
   });
 }

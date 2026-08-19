@@ -7,6 +7,7 @@ escolhida pelo usuário em vez da estrutura do Obsidian.
 from __future__ import annotations
 
 import json
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,15 +24,33 @@ METADATA_FILE = "meeting.json"
 # Caracteres proibidos em nome de arquivo no Windows (e problemáticos no resto).
 _INVALID_CHARS = '<>:"/\\|?*'
 
+# Extensões descartadas do nome da reunião. A lista é fechada de propósito:
+# cortar tudo depois do último ponto transformava o nome "Daily - IRM -
+# 2026-08-19 às 10.18.33" em "... às 10.18", comendo o final do que o usuário
+# escreveu — o ponto ali era da hora, não de uma extensão.
+_MEDIA_EXTENSIONS = frozenset((
+    "mkv", "mp4", "mov", "webm", "avi", "m4v", "wmv", "flv",
+    "mp3", "wav", "m4a", "aac", "ogg", "flac",
+    "md", "txt", "json",
+))
+
 
 def safe_stem(name: str) -> str:
     """Transforma o nome do vídeo num nome de arquivo seguro.
 
     Descarta qualquer diretório no caminho (nos dois separadores, para o nome
-    vindo de outro SO — o container é Linux e a UI é Windows) e a extensão.
+    vindo de outro SO — o container é Linux e a UI é Windows) e a extensão,
+    quando ela é de um formato conhecido.
+
+    O nome é normalizado para NFC porque gravações do macOS chegam com os
+    acentos decompostos (``a`` + acento combinante). O NTFS guarda os dois
+    como nomes distintos, e ferramentas que normalizam para NFC ao escrever
+    (o Claude Code, entre elas) acabam criando um arquivo que o programa que
+    pediu a escrita não consegue mais encontrar.
     """
-    base = name.replace("\\", "/").rsplit("/", 1)[-1]
-    stem = base.rsplit(".", 1)[0] if "." in base else base
+    base = unicodedata.normalize("NFC", name).replace("\\", "/").rsplit("/", 1)[-1]
+    head, ponto, tail = base.rpartition(".")
+    stem = head if ponto and tail.lower() in _MEDIA_EXTENSIONS else base
     for ch in _INVALID_CHARS:
         stem = stem.replace(ch, "-")
     stem = " ".join(stem.split())  # colapsa espaços e quebras

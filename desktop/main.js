@@ -445,6 +445,10 @@ async function finishJob(event, outputDir, projectId, autoName = false) {
   }
 
   send('job:event', event);
+
+  // Resumo e tarefas em PDF saem sozinhos. Fora do caminho do aviso de pronto:
+  // a transcrição já está na tela enquanto o Claude escreve os documentos.
+  if (event.meetingId) enqueueDocs(event.meetingId);
 }
 
 function extractTasks({ meetingId, projectId, transcriptPath, context }) {
@@ -647,11 +651,30 @@ function runDocJob({ kind, transcriptPath, context = '' }) {
  * botão só. A ordem importa — o resumo primeiro, porque é o que a pessoa abre
  * enquanto o outro ainda está sendo escrito.
  */
-async function generateDocs({ meetingId }) {
-  if (currentDocJob) {
-    return { started: false, message: 'Já existe um documento sendo gerado.' };
-  }
+/**
+ * Fila de documentos.
+ *
+ * A geração acontece sozinha ao fim de cada reunião, e duas importações
+ * seguidas chegariam juntas aqui. Em vez de recusar a segunda, ela espera a
+ * vez — o Claude só roda um de cada vez.
+ */
+const docQueue = [];
 
+function enqueueDocs(meetingId) {
+  if (docQueue.includes(meetingId)) return { started: true, queued: true };
+  docQueue.push(meetingId);
+  if (docQueue.length === 1) runDocQueue();
+  return { started: true, queued: docQueue.length > 1 };
+}
+
+async function runDocQueue() {
+  while (docQueue.length) {
+    await generateDocs({ meetingId: docQueue[0] });
+    docQueue.shift();
+  }
+}
+
+async function generateDocs({ meetingId }) {
   const dir = outDir();
   const meeting = library.getMeeting(dir, meetingId);
   if (!meeting || !meeting.transcript) {
@@ -660,27 +683,26 @@ async function generateDocs({ meetingId }) {
 
   const context = meeting.project?.context || '';
   currentDocJob = { child: null, kind: 'resumo', canceled: false };
+  send('doc:progress', { kind: 'resumo', description: 'lendo a transcrição' });
 
-  (async () => {
-    const resultados = [];
-    for (const kind of ['resumo', 'tarefas']) {
-      if (currentDocJob?.canceled) break;
-      resultados.push(await runDocJob({ kind, transcriptPath: meeting.transcript, context }));
-    }
-    const canceled = Boolean(currentDocJob?.canceled);
-    currentDocJob = null;
-    const gerados = resultados.filter((r) => r.ok);
-    send('doc:done', {
-      meetingId,
-      ok: gerados.length > 0,
-      canceled,
-      kinds: gerados.map((r) => r.kind),
-      message: gerados.length === resultados.length
-        ? ''
-        : (resultados.find((r) => !r.ok)?.message || ''),
-    });
-  })();
+  const resultados = [];
+  for (const kind of ['resumo', 'tarefas']) {
+    if (currentDocJob?.canceled) break;
+    resultados.push(await runDocJob({ kind, transcriptPath: meeting.transcript, context }));
+  }
 
+  const canceled = Boolean(currentDocJob?.canceled);
+  currentDocJob = null;
+  const gerados = resultados.filter((r) => r.ok);
+  send('doc:done', {
+    meetingId,
+    ok: gerados.length > 0,
+    canceled,
+    kinds: gerados.map((r) => r.kind),
+    message: gerados.length === resultados.length
+      ? ''
+      : (resultados.find((r) => !r.ok)?.message || ''),
+  });
   return { started: true };
 }
 
@@ -770,7 +792,7 @@ ipcMain.handle('job:cancel', () => cancelJob());
 ipcMain.handle('transcript:import', (_e, payload) => importTranscriptJob(payload));
 
 // Documentos: o front manda o id da reunião; aqui viram caminho e contexto.
-ipcMain.handle('doc:generate', (_e, { meetingId }) => generateDocs({ meetingId }));
+ipcMain.handle('doc:generate', (_e, { meetingId }) => enqueueDocs(meetingId));
 ipcMain.handle('doc:cancel', () => cancelDocJob());
 
 // Chat por projeto — o RAG entra no M3 (embeddings + Vector DB).

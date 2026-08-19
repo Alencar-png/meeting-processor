@@ -207,6 +207,8 @@ function createNetwork(canvas) {
       ctx.fill();
     }
 
+    drawProgress(width, height);
+
     // Neurônios.
     for (const n of neurons) {
       const acesa = n.charge;
@@ -226,10 +228,57 @@ function createNetwork(canvas) {
     }
   }
 
+  /**
+   * Barra de progresso na base da rede.
+   *
+   * O trilho fica apagado e a parte percorrida ganha cor — ciano virando
+   * violeta conforme avança — com a cabeça acesa no ponto exato. Dentro da
+   * animação, e não abaixo dela: é o mesmo trabalho sendo mostrado.
+   */
+  function drawProgress(width, height) {
+    const margem = width * 0.06;
+    const largura = width - margem * 2;
+    const y = height - 8;
+
+    ctx.strokeStyle = 'rgba(83, 213, 253, 0.12)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(margem, y);
+    ctx.lineTo(margem + largura, y);
+    ctx.stroke();
+
+    if (progress <= 0.001) return;
+
+    const fim = margem + largura * progress;
+    const gradiente = ctx.createLinearGradient(margem, 0, margem + largura, 0);
+    gradiente.addColorStop(0, '#53d5fd');
+    gradiente.addColorStop(0.6, '#7ab8fc');
+    gradiente.addColorStop(1, '#9d8bfa');
+
+    ctx.strokeStyle = gradiente;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(margem, y);
+    ctx.lineTo(fim, y);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(190, 240, 255, 0.9)';
+    ctx.beginPath();
+    ctx.arc(fim, y, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(83, 213, 253, 0.18)';
+    ctx.beginPath();
+    ctx.arc(fim, y, 9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   function frame(now) {
     const dt = Math.min(48, now - (last || now));
     last = now;
     if (!reduceMotion) step(dt);
+    else progress += (target - progress) * 0.06;
     draw();
     raf = window.requestAnimationFrame(frame);
   }

@@ -892,20 +892,29 @@ async function openDrawer(meetingId) {
     meta.append(div);
   }
 
+  // Os arquivos são os que existem na pasta, com o caminho real: clicar abre
+  // no programa padrão do sistema.
   const files = $('drawer-files');
   files.replaceChildren();
-  const rows = [[`${m.name}.md`, 'transcrição'], [`${m.name}.txt`, 'texto']];
-  if (m.hasResumo) rows.push(['resumo.pdf', 'documento']);
-  if (m.hasTarefas) rows.push(['tarefas.pdf', 'documento']);
-  for (const [name, kind] of rows) {
+  const ROTULOS = { md: 'transcrição', txt: 'texto', pdf: 'documento' };
+  for (const f of m.files || []) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'file-row';
-    b.innerHTML = `<span></span><span class="ext">${kind}</span>`;
-    b.firstChild.textContent = name;
-    b.addEventListener('click', () => window.api.openPath(name));
+    b.title = `Abrir ${f.name}`;
+    const nome = document.createElement('span');
+    nome.textContent = f.name;
+    const tipo = document.createElement('span');
+    tipo.className = 'ext';
+    tipo.textContent = `${ROTULOS[f.ext] || f.ext} · ${f.sizeKB} KB`;
+    b.append(nome, tipo);
+    b.addEventListener('click', () => window.api.openPath(f.path));
     files.append(b);
   }
+  if (!(m.files || []).length) files.append(emptyNote('Nenhum arquivo nesta reunião.'));
+
+  // O botão só aparece quando a geração automática não deixou os dois PDFs.
+  $('drawer-docs').hidden = m.hasResumo && m.hasTarefas;
 
   renderReader(drawerTranscript, '');
   $('drawer').hidden = false;
@@ -1011,9 +1020,15 @@ $('drawer-delete').addEventListener('click', async () => {
 });
 
 $('drawer-docs').addEventListener('click', async () => {
-  toast('Gerando <strong>resumo e tarefas</strong> — o Claude está lendo a reunião…');
-  const r = await window.api.generateDoc({ meetingId: drawerMeetingId });
-  if (r && r.started === false) toast(r.message);
+  const alvo = drawerMeetingId;
+  closeDrawer();
+  enterDocPhase(alvo);
+  const r = await window.api.generateDoc({ meetingId: alvo });
+  if (r && r.started === false) {
+    docPhase = false;
+    $('overlay-process').hidden = true;
+    toast(r.message);
+  }
 });
 
 // --- Modais -----------------------------------------------------------------
@@ -1403,7 +1418,41 @@ function startProcessing(label, projectId) {
   processNet.setProgress(0);
 }
 
-$('process-cancel').addEventListener('click', () => window.api.cancelJob());
+$('process-cancel').addEventListener('click', () => {
+  if (docPhase) window.api.cancelDoc();
+  else window.api.cancelJob();
+});
+
+/**
+ * A reunião só está pronta quando os documentos estão prontos.
+ *
+ * A tela de trabalho continua aberta na etapa dos PDFs em vez de fechar e
+ * deixar o resto acontecer atrás de avisos no rodapé. O Claude não informa
+ * percentual, então cada passo do stream empurra a barra um pouco — resumo na
+ * primeira metade, tarefas na segunda.
+ */
+let docPhase = false;
+let docProgress = 0;
+let pendingMeetingId = '';
+
+function enterDocPhase(meetingId) {
+  docPhase = true;
+  docProgress = 0;
+  pendingMeetingId = meetingId || '';
+  $('process-stage').textContent = 'Gerando resumo e tarefas';
+  $('process-pct').textContent = '0%';
+  $('overlay-process').hidden = false;
+  processNet?.setMode('working');
+  processNet?.setProgress(0);
+}
+
+function advanceDocs(kind) {
+  const base = kind === 'tarefas' ? 0.5 : 0;
+  const teto = kind === 'tarefas' ? 0.97 : 0.5;
+  docProgress = Math.min(teto, Math.max(base, docProgress + 0.07));
+  processNet?.setProgress(docProgress);
+  $('process-pct').textContent = `${Math.round(docProgress * 100)}%`;
+}
 
 window.api.on('job:event', async (event) => {
   if (event.event === 'stage') {
@@ -1414,44 +1463,61 @@ window.api.on('job:event', async (event) => {
     $('process-stage').textContent = STAGE_LABELS[event.key] || event.label || '';
   } else if (event.event === 'done') {
     processNet?.setProgress(1);
-    $('process-stage').textContent = 'Pronto';
-    setTimeout(async () => {
-      $('overlay-process').hidden = true;
-      await refreshAll();
-      if (event.renamedTo) {
-        toast(`Reunião pronta como <strong>${event.renamedTo}</strong>`
-          + (event.tasksCreated ? ` — ${event.tasksCreated} tarefas no kanban` : ''));
-      } else {
-        toast(event.tasksCreated
-          ? `Reunião pronta — <strong>${event.tasksCreated} tarefas</strong> criadas no kanban`
-          : 'Reunião pronta — transcrição na biblioteca');
-      }
-      if (jobProjectId) openProject(jobProjectId, event.tasksCreated ? 'kanban' : 'meetings');
-      if (event.meetingId) openDrawer(event.meetingId);
-    }, 600);
+    $('process-stage').textContent = 'Transcrição pronta';
+    await refreshAll();
+    if (jobProjectId) openProject(jobProjectId, event.tasksCreated ? 'kanban' : 'meetings');
+    if (event.renamedTo) {
+      toast(`Reunião pronta como <strong>${event.renamedTo}</strong>`
+        + (event.tasksCreated ? ` — ${event.tasksCreated} tarefas no kanban` : ''));
+    } else if (event.tasksCreated) {
+      toast(`<strong>${event.tasksCreated} tarefas</strong> criadas no kanban`);
+    }
+    // Os documentos vêm em seguida: a tela segue aberta na próxima etapa.
+    setTimeout(() => enterDocPhase(event.meetingId), 700);
   } else if (event.event === 'error') {
+    docPhase = false;
     $('overlay-process').hidden = true;
     toast(`Não deu para processar: ${event.message || 'erro desconhecido'}`);
   } else if (event.event === 'canceled') {
+    docPhase = false;
     $('overlay-process').hidden = true;
   }
 });
 
-window.api.on('doc:done', async (result) => {
-  if (result.canceled) { toast('Geração cancelada.'); return; }
-  if (!result.ok) {
-    toast(`Não deu para gerar os documentos. ${result.message || ''}`.trim());
-    return;
-  }
-  const nomes = result.kinds.map((k) => (k === 'tarefas' ? 'tarefas' : 'resumo'));
-  toast(`<strong>${nomes.join(' e ')}</strong> em PDF na reunião.`);
-  if (drawerMeetingId === result.meetingId) openDrawer(result.meetingId);
-  refreshAll();
+window.api.on('doc:progress', ({ kind }) => {
+  if (!docPhase) return;
+  advanceDocs(kind);
 });
 
-window.api.on('doc:progress', ({ description }) => {
-  toast(`Gerando documento — ${description}…`);
+window.api.on('doc:done', async (result) => {
+  const meetingId = result.meetingId || pendingMeetingId;
+  if (docPhase) {
+    processNet?.setProgress(1);
+    $('process-pct').textContent = '100%';
+    $('process-stage').textContent = 'Pronto';
+    await pausaCurta();
+    $('overlay-process').hidden = true;
+    docPhase = false;
+    pendingMeetingId = '';
+  }
+
+  await refreshAll();
+
+  if (result.canceled) { toast('Geração cancelada.'); return; }
+  if (!result.ok) {
+    toast(`Os documentos não foram gerados. ${result.message || ''}`.trim());
+    if (meetingId) openDrawer(meetingId);
+    return;
+  }
+
+  const nomes = result.kinds.map((k) => (k === 'tarefas' ? 'tarefas' : 'resumo'));
+  toast(`<strong>${nomes.join(' e ')}</strong> em PDF prontos na reunião.`);
+  if (meetingId) openDrawer(meetingId);
 });
+
+function pausaCurta() {
+  return new Promise((resolve) => setTimeout(resolve, 700));
+}
 
 // --- Navegação: ligações -----------------------------------------------------------------
 

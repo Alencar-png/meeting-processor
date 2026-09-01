@@ -137,9 +137,9 @@ function setChatSession(dir, projectId, sessionId) {
 }
 
 /**
- * Remove o projeto. As reuniões não são apagadas — apenas ficam sem projeto,
- * o que é o comportamento menos destrutivo diante de uma ação ambígua. As
- * tarefas vão junto: sem projeto elas não teriam onde viver.
+ * Remove o projeto do banco: vínculos, tarefas e histórico do chat vão junto.
+ * Os arquivos das reuniões são de quem chama (main.js), que os manda para a
+ * Lixeira antes de chegar aqui — excluir um projeto é excluir tudo dele.
  */
 function deleteProject(dir, projectId) {
   const conn = db.open(dir);
@@ -147,8 +147,11 @@ function deleteProject(dir, projectId) {
   const existe = conn.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId);
   if (!existe) return { ok: false, message: 'Projeto não encontrado.' };
 
-  // As chaves estrangeiras cuidam do resto: tarefas caem, vínculos zeram.
   db.transaction(conn, () => {
+    // Os vínculos saem explicitamente: a chave estrangeira os deixaria como
+    // linhas sem projeto, e isso é lixo, não histórico.
+    conn.prepare('DELETE FROM meetings WHERE project_id = ?').run(projectId);
+    // Tarefas e chat caem pela cascata do banco.
     conn.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
   });
   return { ok: true };

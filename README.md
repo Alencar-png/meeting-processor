@@ -29,9 +29,10 @@ e o app fica livre para uso.
 O centro é o **projeto**: cada um tem seu Kanban, suas reuniões, seus
 documentos, um texto de contexto que orienta o tom do que é gerado — e um
 **chat**, que é o Claude Code rodando com tudo isso à mão. Dê ao projeto uma
-**pasta de trabalho** (um repositório, uma pasta de documentos) e o chat passa
-a trabalhar nela; ligue o **modo autônomo** e ele age na máquina sem pedir a
-cada passo. Desligado, só lê e pesquisa.
+**pasta de trabalho** (um repositório, uma pasta de documentos): o app cria
+`synapse/` lá dentro e passa a guardar as reuniões do projeto nela, e o chat
+passa a trabalhar nessa pasta. Ligue o **modo autônomo** e ele age na máquina
+sem pedir a cada passo; desligado, só lê e pesquisa.
 
 ---
 

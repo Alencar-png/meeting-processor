@@ -351,7 +351,7 @@ function projectAction(label, title, onClick, extraClass = '') {
 async function confirmDeleteProject(p) {
   const ok = await confirmDanger({
     title: `Excluir "${p.name}"?`,
-    message: `As reuniões continuam na biblioteca, apenas ficam sem projeto. ${p.openTasks} tarefa(s) do kanban serão apagadas.`,
+    message: `Tudo dele vai junto: as reuniões (transcrições, análises e PDFs vão para a Lixeira), ${p.openTasks} tarefa(s) abertas no kanban e o histórico do chat.`,
     confirmLabel: 'Excluir projeto',
   });
   if (!ok) return;
@@ -1241,7 +1241,7 @@ $('drawer-rename').addEventListener('click', () => {
 $('drawer-delete').addEventListener('click', async () => {
   const ok = await confirmDanger({
     title: 'Excluir esta reunião?',
-    message: 'A transcrição e os documentos gerados serão apagados do disco. Não dá para desfazer.',
+    message: 'A transcrição, a análise e o PDF vão para a Lixeira, e as tarefas que nasceram desta reunião são apagadas do kanban.',
     confirmLabel: 'Excluir reunião',
   });
   if (!ok) return;
@@ -1334,8 +1334,11 @@ $('mp-form').addEventListener('submit', async (e) => {
   });
   if (!r.ok) { $('mp-error').textContent = r.message; return; }
   closeModals();
-  await refreshProjects();
+  await refreshAll();
   openProject(r.id, editingProjectId ? currentTab : 'overview');
+  // A pasta mudou: as reuniões do projeto foram junto, e vale dizer quantas.
+  if (r.moved) toast(`<strong>${r.moved}</strong> reunião(ões) movida(s) para a pasta do projeto.`);
+  if (r.warning) toast(r.warning);
 });
 
 $('mp-workdir-pick').addEventListener('click', async () => {
@@ -1349,7 +1352,7 @@ $('mp-delete').addEventListener('click', async () => {
   if (!p) return;
   const ok = await confirmDanger({
     title: `Excluir "${p.name}"?`,
-    message: 'As reuniões continuam na biblioteca, apenas ficam sem projeto. As tarefas do kanban serão apagadas.',
+    message: 'Tudo dele vai junto: as reuniões (transcrições, análises e PDFs vão para a Lixeira), as tarefas do kanban e o histórico do chat.',
     confirmLabel: 'Excluir projeto',
   });
   if (!ok) return;

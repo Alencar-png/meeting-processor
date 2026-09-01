@@ -38,7 +38,9 @@ const fmtDate = (ts) => {
  * de procurar. Tarefas vão com id e status; sem API de escrita, o que ele pode
  * fazer é ler e sugerir — o texto diz isso para não prometer o que não faz.
  */
-function buildChatSystemPrompt({ project, meetings = [], tasks = [], outputDir, workdir, bypass }) {
+function buildChatSystemPrompt({
+  project, meetings = [], tasks = [], workspaceDir, meetingsDir, workdir, bypass,
+}) {
   const linhas = [
     'Você é o assistente do Synapse — o segundo cérebro de quem usa o app — trabalhando dentro de um projeto.',
     'Responda em português do Brasil, direto e concreto. Quando a resposta vier de uma reunião ou tarefa, diga qual.',
@@ -51,8 +53,8 @@ function buildChatSystemPrompt({ project, meetings = [], tasks = [], outputDir, 
 
   linhas.push('', '## Onde as coisas estão', '');
   linhas.push(`- Pasta de trabalho (seu diretório atual): ${workdir}`);
-  if (workdir !== outputDir) linhas.push(`- Pasta das reuniões (você também tem acesso a ela): ${outputDir}`);
-  linhas.push('- O Kanban do projeto mora no banco `synapse.db` dessa pasta; não o edite diretamente — para mudar tarefas, diga à pessoa o que faria.');
+  if (meetingsDir && meetingsDir !== workdir) linhas.push(`- Reuniões deste projeto: ${meetingsDir}`);
+  linhas.push(`- O Kanban do projeto mora em ${path.join(workspaceDir || meetingsDir || workdir, 'synapse.db')}; não o edite diretamente — para mudar tarefas, diga à pessoa o que faria.`);
 
   if (meetings.length) {
     linhas.push('', `## Reuniões do projeto (${meetings.length})`, '');

@@ -163,13 +163,15 @@ function createFromExtraction(dir, { projectId, meetingId, items }) {
 }
 
 /**
- * A reunião sumiu, mas a tarefa continua valendo: perde só o vínculo de
- * origem. Apagar trabalho por causa de um arquivo excluído seria destrutivo.
+ * A reunião foi excluída: as tarefas que nasceram dela vão junto. Excluir é
+ * excluir tudo o que é daquela coisa — uma tarefa órfã da reunião que a gerou
+ * viraria ruído no Kanban.
  */
-function forgetMeeting(dir, meetingId) {
+function deleteByMeeting(dir, meetingId) {
   const conn = db.open(dir);
-  if (!conn) return;
-  conn.prepare("UPDATE tasks SET meeting_id = '' WHERE meeting_id = ?").run(meetingId);
+  if (!conn || !meetingId) return { deleted: 0 };
+  const r = conn.prepare('DELETE FROM tasks WHERE meeting_id = ?').run(meetingId);
+  return { deleted: r.changes };
 }
 
 /** Acompanha o novo id quando a reunião é renomeada. */
@@ -183,8 +185,8 @@ module.exports = {
   PRIORITIES,
   STATUSES,
   createFromExtraction,
+  deleteByMeeting,
   deleteTask,
-  forgetMeeting,
   listTasks,
   moveTask,
   openCountByProject,

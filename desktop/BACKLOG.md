@@ -7,7 +7,7 @@ Status real do produto. 🟢 = pronto e verificado no app com dados reais,
 |----|-------|---------|--------|--------|
 | PRJ-01 | Projetos | Criar projeto | Alta | 🟢 |
 | PRJ-02 | Projetos | Editar projeto | Alta | 🟢 |
-| PRJ-03 | Projetos | Excluir projeto | Alta | 🟢 (leva as tarefas junto; reuniões ficam sem projeto) |
+| PRJ-03 | Projetos | Excluir projeto | Alta | 🟡 leva tudo: reuniões (Lixeira), pasta `synapse`, tarefas, vínculos e chat; falta verificar no app |
 | PRJ-04 | Projetos | Listar projetos | Alta | 🟢 (módulo próprio: blocos ou tabela ordenável, com CRUD na própria lista) |
 | PRJ-05 | Projetos | Dashboard individual do projeto | Alta | 🟢 |
 | PRJ-06 | Projetos | Associar reuniões ao projeto | Alta | 🟢 (na importação, na gravação e no painel da reunião) |
@@ -42,7 +42,7 @@ Status real do produto. 🟢 = pronto e verificado no app com dados reais,
 | CHAT-05 | Chat | Citar reunião utilizada | Alta | 🟡 o Claude cita no texto; as ferramentas usadas (arquivos lidos) aparecem acima da resposta |
 | CHAT-06 | Chat | Citar tarefas/cards utilizados | Alta | 🟡 idem, no texto |
 | CHAT-07 | Chat | Modo autônomo por projeto (bypass) | Alta | 🟡 interruptor no chat, desligado por padrão, com confirmação; `--dangerously-skip-permissions`; modo leitura só Read/Glob/Grep/web |
-| PRJ-07 | Projetos | Pasta de trabalho do projeto | Alta | 🟡 diretório onde o Claude trabalha no chat (repositório, documentos); vazio usa a pasta de reuniões |
+| PRJ-07 | Projetos | Pasta de trabalho do projeto | Alta | 🟡 a casa do projeto: `synapse/` dentro dela guarda as reuniões dele (biblioteca lê várias raízes; mudar a pasta move; excluir o projeto exclui tudo dele); é o cwd do chat |
 | UI-01 | Interface | Sidebar organizada por módulos | Alta | 🟢 |
 | UI-02 | Interface | Navegação Projeto → Dashboard | Alta | 🟢 |
 | UI-03 | Interface | Alternar Kanban/Reuniões/Grafo/Chat | Alta | 🟢 |

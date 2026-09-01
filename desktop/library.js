@@ -1,12 +1,18 @@
 'use strict';
 
 /**
- * Biblioteca de transcrições: a pasta de saída lida como uma lista de reuniões.
+ * Biblioteca de transcrições: as pastas de reunião lidas como uma lista.
  *
  * Cada reunião é uma subpasta com o nome da gravação, contendo a transcrição
- * (.md/.txt) e os documentos gerados (.pdf). Transcrições antigas, gravadas
- * soltas na raiz antes dessa organização, continuam aparecendo na lista —
- * some da tela é pior do que uma lista com dois formatos.
+ * (.md/.txt), a análise (analise.json) e os documentos gerados (.pdf). Ela
+ * mora em uma de várias raízes: a pasta de saída, para reuniões sem projeto,
+ * ou `<pasta de trabalho>/synapse/` para as de um projeto que tem pasta — o
+ * projeto é um espaço de trabalho, e o que é dele fica com ele. Transcrições
+ * antigas, gravadas soltas na raiz da pasta de saída, continuam aparecendo —
+ * sumir da tela é pior do que uma lista com dois formatos.
+ *
+ * O `dir` que todas as funções recebem é a pasta de saída: é onde está o
+ * banco (`synapse.db`) e de onde se descobrem as outras raízes.
  */
 
 const fs = require('node:fs');
@@ -29,6 +35,30 @@ const DERIVED_SUFFIXES = [' - Documento', ' - Tarefas', ' - Resumo executivo', '
 
 // Caracteres proibidos em nome de arquivo no Windows.
 const INVALID_CHARS = /[<>:"/\\|?*]/;
+
+// Dentro da pasta de trabalho de um projeto, as reuniões ficam em `synapse/`.
+const PROJECT_SUBDIR = 'synapse';
+
+// O id da reunião é o nome da pasta — com o projeto na frente quando ela mora
+// na raiz dele, porque dois projetos podem ter reuniões de mesmo nome.
+const ID_SEP = '::';
+
+/** Onde as reuniões de um projeto moram (a pasta de saída, se ele não tem pasta). */
+function meetingsRootFor(dir, project) {
+  return project?.workdir ? path.join(project.workdir, PROJECT_SUBDIR) : dir;
+}
+
+function meetingId(projectId, name) {
+  return projectId ? `${projectId}${ID_SEP}${name}` : name;
+}
+
+function splitMeetingId(id) {
+  const texto = String(id || '');
+  const i = texto.indexOf(ID_SEP);
+  return i < 0
+    ? { projectId: '', name: texto }
+    : { projectId: texto.slice(0, i), name: texto.slice(i + ID_SEP.length) };
+}
 
 /** Nome-base da reunião a que um arquivo pertence (formato antigo). */
 function groupKey(fileName) {
@@ -84,13 +114,16 @@ function finish(meeting) {
   };
 }
 
-/** Reuniões gravadas em pasta própria (formato atual). */
-function readFolders(dir) {
+/**
+ * Reuniões gravadas em pasta própria (formato atual) dentro de uma raiz.
+ * `owner` é o projeto dono da raiz, quando ela é a pasta de um projeto.
+ */
+function readFolders(root, owner = null) {
   const meetings = [];
 
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
-    const folder = path.join(dir, entry.name);
+    const folder = path.join(root, entry.name);
 
     let files;
     try {
@@ -102,7 +135,9 @@ function readFolders(dir) {
     }
 
     if (!files.some((f) => f.kind === 'transcricao')) continue;
-    meetings.push(finish({ id: entry.name, name: entry.name, dir: folder, legacy: false, files }));
+    meetings.push(finish({
+      id: meetingId(owner?.id, entry.name), name: entry.name, dir: folder, root, owner, legacy: false, files,
+    }));
   }
 
   return meetings;
@@ -125,7 +160,7 @@ function readLooseFiles(dir) {
     }
 
     if (!groups.has(key)) {
-      groups.set(key, { id: key, name: key, dir, legacy: true, files: [] });
+      groups.set(key, { id: key, name: key, dir, root: dir, owner: null, legacy: true, files: [] });
     }
     groups.get(key).files.push(file);
   }
@@ -136,10 +171,12 @@ function readLooseFiles(dir) {
 }
 
 /**
- * Lista as reuniões de uma pasta, da mais recente para a mais antiga.
+ * Lista as reuniões de todas as raízes, da mais recente para a mais antiga.
  *
- * Se uma pasta e arquivos soltos tiverem o mesmo nome, a pasta vence: dois
- * itens com o mesmo id tornariam ambíguo qual deles renomear ou excluir.
+ * Na pasta de saída, se uma pasta e arquivos soltos tiverem o mesmo nome, a
+ * pasta vence: dois itens com o mesmo id tornariam ambíguo qual deles renomear
+ * ou excluir. O projeto de quem está lá vem do banco. Na raiz de um projeto,
+ * o projeto é o dono da raiz — estar lá é pertencer.
  */
 function listMeetings(dir) {
   if (!dir || !fs.existsSync(dir)) return [];
@@ -148,10 +185,17 @@ function listMeetings(dir) {
   const taken = new Set(folders.map((m) => m.id));
   const loose = readLooseFiles(dir).filter((m) => !taken.has(m.id));
   const porReuniao = projects.projectsByMeeting(dir);
+  const semRaiz = [...folders, ...loose].map((m) => ({ ...m, project: porReuniao[m.id] || null }));
 
-  return [...folders, ...loose]
-    .map((m) => ({ ...m, project: porReuniao[m.id] || null }))
-    .sort((a, b) => b.modified - a.modified);
+  const deProjetos = [];
+  for (const p of projects.listProjects(dir)) {
+    const root = meetingsRootFor(dir, p);
+    if (path.resolve(root) === path.resolve(dir) || !fs.existsSync(root)) continue;
+    const owner = { id: p.id, name: p.name, context: p.context || '' };
+    for (const m of readFolders(root, owner)) deProjetos.push({ ...m, project: owner });
+  }
+
+  return [...semRaiz, ...deProjetos].sort((a, b) => b.modified - a.modified);
 }
 
 /** Uma reunião específica, ou null. */
@@ -231,12 +275,15 @@ function renameMeeting(dir, id, newName) {
   const existing = listMeetings(dir);
   const meeting = existing.find((m) => m.id === id);
   if (!meeting) return { ok: false, message: 'Transcrição não encontrada.' };
-  if (clean === toNFC(meeting.name)) return { ok: true, id: meeting.name };
+  if (clean === toNFC(meeting.name)) return { ok: true, id: meeting.id };
 
-  // Conflito é com qualquer reunião de mesmo nome — pasta ou arquivos soltos.
-  if (existing.some((m) => toNFC(m.id) === clean)) {
+  // Conflito é com qualquer reunião de mesmo nome na mesma raiz — pasta ou
+  // arquivos soltos. Em outra raiz o nome pode repetir: o id não repete.
+  const mesmaRaiz = (m) => path.resolve(m.root) === path.resolve(meeting.root);
+  if (existing.some((m) => mesmaRaiz(m) && toNFC(m.name) === clean)) {
     return { ok: false, message: `Já existe uma transcrição chamada ${clean}.` };
   }
+  const novoId = meetingId(meeting.owner?.id, clean);
 
   if (meeting.legacy) {
     const moves = meeting.files.map((file) => ({
@@ -248,11 +295,11 @@ function renameMeeting(dir, id, newName) {
       return { ok: false, message: `Já existe um arquivo chamado ${path.basename(conflict.to)}.` };
     }
     const result = renameFiles(moves);
-    if (result.ok) projects.renameMeeting(dir, meeting.id, clean);
-    return result.ok ? { ok: true, id: clean } : result;
+    if (result.ok) projects.renameMeeting(dir, meeting.id, novoId);
+    return result.ok ? { ok: true, id: novoId } : result;
   }
 
-  const newFolder = path.join(dir, clean);
+  const newFolder = path.join(meeting.root, clean);
   if (fs.existsSync(newFolder)) {
     return { ok: false, message: `Já existe uma transcrição chamada ${clean}.` };
   }
@@ -273,10 +320,55 @@ function renameMeeting(dir, id, newName) {
     return { ok: false, message: `Não foi possível renomear a pasta: ${err.message}` };
   }
 
-  // O vínculo com o grupo acompanha o novo nome; sem isso a reunião sairia
+  // O vínculo com o projeto acompanha o novo id; sem isso a reunião sairia
   // silenciosamente do projeto ao ser renomeada.
-  projects.renameMeeting(dir, meeting.id, clean);
-  return { ok: true, id: clean };
+  projects.renameMeeting(dir, meeting.id, novoId);
+  return { ok: true, id: novoId };
+}
+
+/** Move pasta ou arquivo; entre discos, copia e apaga. */
+function moveSync(from, to) {
+  try {
+    fs.renameSync(from, to);
+  } catch (err) {
+    if (err.code !== 'EXDEV') throw err;
+    fs.cpSync(from, to, { recursive: true });
+    fs.rmSync(from, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Leva a reunião para outra raiz — a pasta de um projeto, ou de volta à pasta
+ * de saída. Reunião do formato antigo (arquivos soltos) vira pasta no destino.
+ *
+ * Não mexe no banco: devolve o id novo para quem chama acompanhá-lo em
+ * vínculos e tarefas.
+ */
+function relocateMeeting(dir, id, toRoot, toProjectId = '') {
+  const meeting = getMeeting(dir, id);
+  if (!meeting) return { ok: false, message: 'Transcrição não encontrada.' };
+
+  const destino = path.join(toRoot, meeting.name);
+  const novoId = meetingId(toProjectId, meeting.name);
+  if (!meeting.legacy && path.resolve(meeting.dir) === path.resolve(destino)) {
+    return { ok: true, id: novoId, moved: false };
+  }
+  if (fs.existsSync(destino)) {
+    return { ok: false, message: `Já existe ${meeting.name} em ${toRoot}.` };
+  }
+
+  try {
+    fs.mkdirSync(toRoot, { recursive: true });
+    if (meeting.legacy) {
+      fs.mkdirSync(destino);
+      for (const file of meeting.files) moveSync(file.path, path.join(destino, file.name));
+    } else {
+      moveSync(meeting.dir, destino);
+    }
+  } catch (err) {
+    return { ok: false, message: `Não foi possível mover ${meeting.name}: ${err.message}` };
+  }
+  return { ok: true, id: novoId, moved: true };
 }
 
 /** Exclui a reunião inteira, ou apenas os arquivos indicados. */
@@ -325,12 +417,17 @@ function deleteMeeting(dir, id, files = null, trash = null) {
 
 module.exports = {
   METADATA_FILE,
+  PROJECT_SUBDIR,
   deleteMeeting,
   getMeeting,
   groupKey,
   listMeetings,
+  meetingId,
+  meetingsRootFor,
   preview,
   readText,
+  relocateMeeting,
   renamedFile,
   renameMeeting,
+  splitMeetingId,
 };

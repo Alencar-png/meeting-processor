@@ -147,6 +147,19 @@ Dois modos, por projeto, no alto do chat:
 
 ## Onde ficam os dados
 
+Um projeto com **pasta de trabalho** é a casa das suas reuniões: o app cria
+`synapse/` dentro dela e cada reunião do projeto é uma subpasta ali —
+transcrição, `analise.json` e PDF. Definir, trocar ou limpar a pasta move as
+reuniões do projeto para a raiz certa (entre discos, copia e apaga). Excluir o
+projeto exclui tudo dele: cada reunião vai para a Lixeira, a `synapse/` vazia
+sai, e tarefas, vínculos e histórico do chat caem do banco. Excluir uma
+reunião leva a pasta dela e as tarefas que nasceram dela. A biblioteca lê
+todas as raízes; o id da reunião leva o projeto na
+frente (`alpha::Kickoff`) porque dois projetos podem ter reuniões de mesmo nome.
+
+A **pasta de saída** (Configurações) fica com as reuniões sem projeto e com o
+`synapse.db` — projetos, tarefas, vínculos, histórico do chat.
+
 As transcrições e os documentos são arquivos na pasta de saída, legíveis sem
 o app. O que não cabe num nome de pasta — projetos, tarefas e o vínculo de
 cada reunião — fica num SQLite na mesma pasta:

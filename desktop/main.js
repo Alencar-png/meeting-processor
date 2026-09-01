@@ -234,7 +234,10 @@ function startJob(payload) {
   }
 
   const settings = loadSettings();
-  const outputDir = payload.outputDir || settings.outputDir;
+  // As reuniões de um projeto com pasta de trabalho nascem dentro dela; as
+  // outras, na pasta de saída. O banco fica sempre na pasta de saída.
+  const project = projects.getProject(settings.outputDir, payload.projectId || '');
+  const outputDir = payload.outputDir || library.meetingsRootFor(settings.outputDir, project);
   try {
     fs.mkdirSync(outputDir, { recursive: true });
   } catch (err) {
@@ -305,14 +308,18 @@ function startJob(payload) {
         const event = JSON.parse(trimmed);
         if (event.event === 'done' && Array.isArray(event.files)) {
           event.files = event.files.map((f) => toHostPath(f, outputDir));
-          // A reunião acabou de nascer: o id é a pasta que recebeu os arquivos.
-          event.meetingId = workspace.meetingIdFromFiles(outputDir, event.files);
-          const projectId = currentJob?.projectId;
+          const dir = loadSettings().outputDir;
+          const projectId = currentJob?.projectId || '';
+          // A reunião acabou de nascer: o id é a pasta que recebeu os arquivos,
+          // com o projeto na frente quando nasceu na raiz dele.
+          const pasta = workspace.meetingIdFromFiles(outputDir, event.files);
+          const naRaizDoProjeto = path.resolve(outputDir) !== path.resolve(dir);
+          event.meetingId = pasta ? library.meetingId(naRaizDoProjeto ? projectId : '', pasta) : '';
           if (event.meetingId && projectId) {
-            projects.assignMeeting(outputDir, event.meetingId, projectId);
+            projects.assignMeeting(dir, event.meetingId, projectId);
           }
-          finishJob(event, outputDir, projectId, currentJob?.autoName);
-          continue;   // o done é anunciado depois da extração
+          finishJob(event, dir, projectId, currentJob?.autoName);
+          continue;   // o done é anunciado depois da análise
         }
         if (event.event === 'error') lastError = event.message;
         send('job:event', event);
@@ -373,15 +380,19 @@ async function importTranscriptJob({ filePath, name, projectId, autoName = false
 
   const settings = loadSettings();
   const outputDir = settings.outputDir;
+  const project = projects.getProject(outputDir, projectId || '');
+  const root = library.meetingsRootFor(outputDir, project);
   const resultado = transcriptImport.importTranscript({
     filePath,
-    outputDir,
+    outputDir: root,
     name,
     language: settings.language,
   });
   if (!resultado.ok) return resultado;
 
-  if (projectId) projects.assignMeeting(outputDir, resultado.id, projectId);
+  const naRaizDoProjeto = path.resolve(root) !== path.resolve(outputDir);
+  const meetingId = library.meetingId(naRaizDoProjeto ? projectId : '', resultado.id);
+  if (projectId) projects.assignMeeting(outputDir, meetingId, projectId);
 
   send('job:event', {
     event: 'stage',
@@ -396,7 +407,7 @@ async function importTranscriptJob({ filePath, name, projectId, autoName = false
     segments: resultado.segments,
     duration: resultado.duration,
     elapsed: 0,
-    meetingId: resultado.id,
+    meetingId,
   };
   await finishJob(evento, outputDir, projectId, autoName);
   return { ok: true, meetingId: evento.meetingId };
@@ -415,6 +426,74 @@ function renameMeetingEverywhere(dir, id, novoNome) {
     tasks.renameMeeting(dir, id, result.id);
   }
   return result;
+}
+
+/** A pasta da reunião vai para a Lixeira, não para o vazio: um clique errado dá para desfazer. */
+async function trashMeeting(meeting) {
+  await shell.trashItem(meeting.dir);
+  return { ok: true, deleted: meeting.files.length, trashed: true };
+}
+
+/**
+ * Exclui a reunião e tudo o que é dela: a pasta (transcrição, análise, PDF),
+ * o vínculo com o projeto e as tarefas que nasceram dela.
+ */
+async function deleteMeetingEverywhere(dir, id, files = null) {
+  const result = await library.deleteMeeting(dir, id, files, trashMeeting);
+  if (result.ok && !files) {
+    projects.forgetMeeting(dir, id);
+    tasks.deleteByMeeting(dir, id);
+  }
+  return result;
+}
+
+/**
+ * Exclui o projeto e tudo o que é dele: cada reunião (para a Lixeira), a pasta
+ * `synapse` que as guardava, as tarefas, o histórico do chat e os vínculos.
+ * Uma reunião que não pôde ir é relatada; o resto segue.
+ */
+async function deleteProjectEverywhere(dir, projectId) {
+  const p = projects.getProject(dir, projectId);
+  if (!p) return { ok: false, message: 'Projeto não encontrado.' };
+
+  const falhas = [];
+  for (const m of workspace.listMeetings(dir, projectId)) {
+    const r = await deleteMeetingEverywhere(dir, m.id);
+    if (!r.ok) falhas.push(r.message);
+  }
+  const root = library.meetingsRootFor(dir, p);
+  if (p.workdir && fs.existsSync(root)) {
+    // Só a pasta `synapse`, e só se ficou vazia: o resto da pasta de trabalho
+    // é da pessoa, não do Synapse.
+    try { fs.rmdirSync(root); } catch { /* ficou algo lá: não é nosso */ }
+  }
+
+  const r = projects.deleteProject(dir, projectId);
+  return falhas.length ? { ...r, warning: falhas.join(' ') } : r;
+}
+
+/**
+ * Leva as reuniões do projeto para a raiz certa.
+ *
+ * A pasta de trabalho ganhou valor, mudou ou foi limpa — e o que é do projeto
+ * vai junto, senão a biblioteca mostraria a reunião num lugar e o disco a
+ * teria em outro. Vínculos e tarefas acompanham o id novo. Uma reunião que
+ * não pôde ir fica onde está e é relatada; as outras seguem.
+ */
+function relocateProjectMeetings(dir, projectId, toRoot, toProjectId) {
+  let moved = 0;
+  const failures = [];
+  for (const m of workspace.listMeetings(dir, projectId)) {
+    const r = library.relocateMeeting(dir, m.id, toRoot, toProjectId);
+    if (!r.ok) { failures.push(r.message); continue; }
+    if (r.id !== m.id) {
+      projects.renameMeeting(dir, m.id, r.id);
+      tasks.renameMeeting(dir, m.id, r.id);
+    }
+    projects.assignMeeting(dir, r.id, projectId);
+    if (r.moved) moved += 1;
+  }
+  return { moved, failures };
 }
 
 async function finishJob(event, outputDir, projectId, autoName = false) {
@@ -585,7 +664,6 @@ function startRecordingJob({ projectId, name, audio, mimeType = 'audio/webm' }) 
     videoPath: temporario,
     name: name || 'Gravação',
     projectId,
-    outputDir: settings.outputDir,
     cleanup: temporario,
   });
 }
@@ -765,32 +843,37 @@ ipcMain.handle('docker:build', () => buildImage());
 
 // Projetos — o grupo do disco visto como projeto do workspace.
 ipcMain.handle('projects:list', () => workspace.listProjects(outDir()));
-ipcMain.handle('projects:save', (_e, project) => projects.saveProject(outDir(), project));
-ipcMain.handle('projects:delete', (_e, projectId) => {
+ipcMain.handle('projects:save', (_e, project) => {
   const dir = outDir();
-  // As tarefas do projeto vão junto — a cascata do banco cuida disso — e as
-  // reuniões apenas ficam sem projeto.
-  return projects.deleteProject(dir, projectId);
+  const antes = project.id ? projects.getProject(dir, project.id) : null;
+  const r = projects.saveProject(dir, project);
+  if (!r.ok) return r;
+
+  const depois = projects.getProject(dir, r.id);
+  const root = library.meetingsRootFor(dir, depois);
+  if (depois.workdir) {
+    // A pasta `synapse` nasce já na criação: é o sinal, no disco, de que
+    // aquela pasta virou casa de um projeto.
+    try {
+      fs.mkdirSync(root, { recursive: true });
+    } catch (err) {
+      return { ...r, warning: `A pasta ${root} não pôde ser criada: ${err.message}` };
+    }
+  }
+  if (antes && antes.workdir !== depois.workdir) {
+    const { moved, failures } = relocateProjectMeetings(dir, r.id, root, depois.workdir ? r.id : '');
+    return { ...r, moved, warning: failures.join(' ') };
+  }
+  return r;
 });
+ipcMain.handle('projects:delete', (_e, projectId) => deleteProjectEverywhere(outDir(), projectId));
 
 // Reuniões (a pasta de saída é a fonte da verdade).
 ipcMain.handle('meetings:list', (_e, projectId) => workspace.listMeetings(outDir(), projectId));
 ipcMain.handle('meetings:get', (_e, id) => workspace.getMeeting(outDir(), id));
 ipcMain.handle('meetings:rename', (_e, { id, name }) =>
   renameMeetingEverywhere(outDir(), id, name));
-ipcMain.handle('meetings:delete', async (_e, { id, files }) => {
-  const dir = outDir();
-  // Vai para a Lixeira, não para o vazio: um clique errado dá para desfazer.
-  const result = await library.deleteMeeting(dir, id, files, async (meeting) => {
-    await shell.trashItem(meeting.dir);
-    return { ok: true, deleted: meeting.files.length, trashed: true };
-  });
-  if (result.ok) {
-    projects.forgetMeeting(dir, id);
-    tasks.forgetMeeting(dir, id);
-  }
-  return result;
-});
+ipcMain.handle('meetings:delete', (_e, { id, files }) => deleteMeetingEverywhere(outDir(), id, files));
 ipcMain.handle('meetings:assign', (_e, { meetingId, projectId }) =>
   projects.assignMeeting(outDir(), meetingId, projectId));
 ipcMain.handle('meetings:read', (_e, filePath) => library.readText(filePath));
@@ -933,6 +1016,7 @@ async function sendChat({ projectId, text }) {
   if (!message) return { ok: false, message: 'Escreva algo.' };
 
   const workdir = project.workdir && fs.existsSync(project.workdir) ? project.workdir : dir;
+  const meetingsDir = library.meetingsRootFor(dir, project);
   const bypass = Boolean(project.chatBypass);
   chatMessages.addMessage(dir, { projectId, role: 'user', text: message });
 
@@ -940,7 +1024,8 @@ async function sendChat({ projectId, text }) {
     project,
     meetings: chatMeetings(dir, projectId),
     tasks: workspace.listTasks(dir, projectId),
-    outputDir: dir,
+    workspaceDir: dir,
+    meetingsDir,
     workdir,
     bypass,
   });
@@ -955,7 +1040,9 @@ async function sendChat({ projectId, text }) {
     sessionId = randomUUID();
     projects.setChatSession(dir, projectId, sessionId);
   }
-  const addDirs = path.resolve(workdir) !== path.resolve(dir) ? [dir] : [];
+  // Além da pasta de trabalho, o Claude pode ler onde estão as reuniões e o banco.
+  const addDirs = [...new Set([meetingsDir, dir].map((d) => path.resolve(d)))]
+    .filter((d) => d !== path.resolve(workdir));
   const rodar = () => runChatTurn({ projectId, message, sessionId, resume, bypass, workdir, promptFile, addDirs });
 
   let rodada = await rodar();

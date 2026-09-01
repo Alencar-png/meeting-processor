@@ -1223,6 +1223,7 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 .field-row .input { flex: 1; min-width: 0; }
 .field-row .icon-btn { flex: none; }
 .field-hint { font-style: normal; font-size: 12px; line-height: 1.45; color: var(--muted-dim); }
+.field-hint code { font-family: var(--mono); font-size: 11px; color: var(--cyan); }
 .context-path { margin: 8px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted-dim); overflow-wrap: anywhere; }
 .context-path:empty { display: none; }
 

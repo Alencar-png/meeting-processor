@@ -310,7 +310,11 @@
           <div class="card">
             <div class="card-head"><h2>Arquivos</h2></div>
             <div class="set-row">
-              <div class="set-info"><strong>Pasta de saída</strong><span class="path" id="set-outdir">—</span></div>
+              <div class="set-info">
+                <strong>Pasta de saída</strong>
+                <span class="path" id="set-outdir">—</span>
+                <span>reuniões sem projeto e o banco do Synapse; as de um projeto com pasta de trabalho ficam na pasta dele</span>
+              </div>
               <button class="btn ghost" id="set-pick-outdir" type="button">Trocar pasta</button>
             </div>
           </div>
@@ -384,8 +388,9 @@
             <button class="btn ghost" id="mp-workdir-pick" type="button">Escolher</button>
             <button class="icon-btn" id="mp-workdir-clear" type="button" title="Limpar">✕</button>
           </div>
-          <em class="field-hint">Onde o Claude trabalha neste projeto — um repositório, uma pasta de
-            documentos. É o diretório do chat.</em>
+          <em class="field-hint">A casa do projeto — um repositório, uma pasta de documentos. O app cria
+            <code>synapse/</code> aqui dentro e passa a guardar as reuniões do projeto nela
+            (transcrição, análise, PDF). Mudar a pasta move o que já existe. É também o diretório do chat.</em>
         </div>
         <p class="err" id="mp-error"></p>
         <div class="modal-actions">

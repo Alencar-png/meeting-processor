@@ -36,12 +36,14 @@ const tasks = [
 
 test('system prompt: projeto, contexto, caminhos das reuniões e tarefas abertas', () => {
   const p = buildChatSystemPrompt({
-    project, meetings, tasks, outputDir: 'C:\\Reunioes', workdir: 'C:\\code\\alpha', bypass: false,
+    project, meetings, tasks,
+    workspaceDir: 'C:\\Reunioes', meetingsDir: 'C:\\code\\alpha\\synapse', workdir: 'C:\\code\\alpha', bypass: false,
   });
   assert.match(p, /## Projeto: Projeto Alpha/);
   assert.match(p, /Plataforma de onboarding/);
   assert.match(p, /Pasta de trabalho \(seu diretório atual\): C:\\code\\alpha/);
-  assert.match(p, /Pasta das reuniões.*C:\\Reunioes/);
+  assert.match(p, /Reuniões deste projeto: C:\\code\\alpha\\synapse/);
+  assert.match(p, /Kanban do projeto mora em C:\\Reunioes\\synapse\.db/);
   assert.match(p, /\*\*Weekly produto\*\* \(18\/08\/2026\)/);
   assert.match(p, /transcrição: C:\\Reunioes\\Weekly produto\\Weekly produto\.md/);
   assert.match(p, /análise.*analise\.json/);
@@ -54,16 +56,17 @@ test('system prompt: projeto, contexto, caminhos das reuniões e tarefas abertas
 
 test('system prompt: sem contexto, sem reuniões, workdir igual à pasta de saída', () => {
   const p = buildChatSystemPrompt({
-    project: { name: 'Vazio', context: '' }, meetings: [], tasks: [], outputDir: 'C:\\R', workdir: 'C:\\R', bypass: true,
+    project: { name: 'Vazio', context: '' }, meetings: [], tasks: [],
+    workspaceDir: 'C:\\R', meetingsDir: 'C:\\R', workdir: 'C:\\R', bypass: true,
   });
   assert.doesNotMatch(p, /Contexto escrito/);
   assert.match(p, /Nenhuma ainda/);
-  assert.doesNotMatch(p, /Pasta das reuniões/);
+  assert.doesNotMatch(p, /Reuniões deste projeto/);
   assert.doesNotMatch(p, /Tarefas abertas/);
 });
 
 test('system prompt: o modo muda o que o Claude acha que pode fazer', () => {
-  const base = { project, meetings: [], tasks: [], outputDir: 'C:\\R', workdir: 'C:\\R' };
+  const base = { project, meetings: [], tasks: [], workspaceDir: 'C:\\R', meetingsDir: 'C:\\R', workdir: 'C:\\R' };
   assert.match(buildChatSystemPrompt({ ...base, bypass: true }), /modo autônomo/);
   assert.match(buildChatSystemPrompt({ ...base, bypass: true }), /destrutivo/);
   assert.match(buildChatSystemPrompt({ ...base, bypass: false }), /modo leitura/);

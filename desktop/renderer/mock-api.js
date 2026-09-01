@@ -43,8 +43,9 @@
     },
   };
 
+  const chatLog = new Map();   // projectId → mensagens
   let projects = [
-    { id: 'p-alpha', name: 'Projeto Alpha', context: 'Plataforma de autenticação e onboarding. Time: Ana (PM), Bruno (backend), Carla (frontend). Documentos vão para o time todo: linguagem direta, sem jargão executivo.' },
+    { id: 'p-alpha', name: 'Projeto Alpha', workdir: 'C:\\code\\alpha', chatBypass: false, context: 'Plataforma de autenticação e onboarding. Time: Ana (PM), Bruno (backend), Carla (frontend). Documentos vão para o time todo: linguagem direta, sem jargão executivo.' },
     { id: 'p-beta', name: 'Projeto Beta', context: 'Migração da infraestrutura para a AWS. Decisões técnicas devem citar custo estimado.' },
   ];
 
@@ -176,13 +177,13 @@
         openTasks: tasks.filter((t) => t.projectId === p.id && t.status !== 'done').length,
       }));
     },
-    async saveProject({ id, name, context }) {
+    async saveProject({ id, name, context, workdir }) {
       const nome = String(name || '').trim();
       if (!nome) return { ok: false, message: 'Dê um nome ao projeto.' };
       if (id) {
         const p = projects.find((x) => x.id === id);
         if (!p) return { ok: false, message: 'Projeto não encontrado.' };
-        p.name = nome; p.context = context || '';
+        p.name = nome; p.context = context || ''; if (workdir !== undefined) p.workdir = workdir;
         return { ok: true, id };
       }
       const novo = { id: nid('p'), name: nome, context: context || '' };
@@ -318,33 +319,34 @@
     },
     async updateRestart() { window.location.reload(); },
 
-    // --- Chat RAG (por projeto) ---
-    async chatAsk({ projectId, question }) {
-      await new Promise((r) => setTimeout(r, 1400));
-      const ms = meetings
-        .filter((m) => m.projectId === projectId && m.insights.length)
-        .sort((a, b) => a.recordedAt - b.recordedAt);
-      const open = tasks.filter((t) => t.projectId === projectId && t.status !== 'done');
-      const fmt = (ts) => {
-        const d = new Date(ts);
-        return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
-      };
-
-      if (!ms.length) {
-        return { answer: 'Ainda não há reuniões indexadas neste projeto. Grave ou importe uma reunião para eu ter contexto.', sources: [] };
-      }
-
-      const partes = ms.slice(-2).map((m) => `Na reunião de **${fmt(m.recordedAt)}**, ${m.insights[0]}.`);
-      if (ms.length > 1) partes.push('Repare que a decisão mais recente substitui a anterior.');
-      if (open.length) partes.push(`Há ${open.length} tarefa(s) aberta(s) relacionada(s) — a mais urgente: **${open[0].title}**.`);
-
-      return {
-        answer: partes.join('\n\n'),
-        sources: [
-          ...ms.slice(-2).map((m) => ({ type: 'meeting', id: m.id, label: `📄 ${m.name}` })),
-          ...open.slice(0, 1).map((t) => ({ type: 'task', id: t.id, label: `📋 ${t.title}` })),
-        ],
-      };
+    // --- Chat do projeto (Claude Code simulado) ---
+    async chatHistory(projectId) { return chatLog.get(projectId) || []; },
+    async chatSend({ projectId, text }) {
+      const p = projects.find((x) => x.id === projectId);
+      const log = chatLog.get(projectId) || [];
+      log.push({ role: 'user', text, tools: [] });
+      chatLog.set(projectId, log);
+      const passos = [
+        { kind: 'tool', label: 'lendo Weekly produto.md' },
+        { kind: 'text', text: 'Olhei a última reunião do projeto.' },
+        { kind: 'tool', label: p?.chatBypass ? 'executando: git status' : 'buscando "onboarding"' },
+      ];
+      (async () => {
+        for (const ev of passos) { await new Promise((r) => setTimeout(r, 700)); emit('chat:event', { projectId, ...ev }); }
+        await new Promise((r) => setTimeout(r, 700));
+        const resposta = `Olhei a última reunião do projeto.\n\nSobre **${text}**: na reunião de 18/08 ficou combinado repetir o teste de onboarding na quinta. Há 1 tarefa aberta ligada a isso.`;
+        log.push({ role: 'ai', text: resposta, tools: passos.filter((e) => e.kind === 'tool').map((e) => e.label), bypass: Boolean(p?.chatBypass) });
+        emit('chat:event', { projectId, kind: 'done', ok: true, text: resposta });
+      })();
+      return { ok: true };
     },
+    async chatStop() { return { stopped: true }; },
+    async chatClear(projectId) { chatLog.delete(projectId); return { ok: true }; },
+    async chatSetBypass({ projectId, enabled }) {
+      const p = projects.find((x) => x.id === projectId);
+      if (p) p.chatBypass = enabled;
+      return { ok: true };
+    },
+    async pickWorkdir() { return 'C:\\Users\\voce\\code\\projeto'; },
   };
 })();

@@ -72,6 +72,8 @@ function listProjects(dir) {
     id: g.id,
     name: g.name,
     context: g.context || '',
+    workdir: g.workdir || '',
+    chatBypass: Boolean(g.chatBypass),
     meetings: contagem[g.id] || 0,
     openTasks: abertas[g.id] || 0,
     lastMeetingAt: ultima[g.id] || 0,

@@ -35,12 +35,14 @@ Status real do produto. 🟢 = pronto e verificado no app com dados reais,
 | MEM-05 | Memória | Relacionar tarefas semanticamente | Média | ⬜ M3 |
 | MEM-06 | Memória | Grafo visual estilo Obsidian | Média | 🟢 (projeto ↔ reuniões ↔ tarefas; conceitos entram no M4) |
 | MEM-07 | Memória | Abrir reunião/card clicando no nó | Média | 🟢 |
-| CHAT-01 | Chat | Chat individual por projeto | Alta | 🟡 UI pronta; resposta ainda informa que a memória não está ligada |
-| CHAT-02 | Chat | RAG sobre reuniões do projeto | Alta | ⬜ M3 |
-| CHAT-03 | Chat | RAG sobre tarefas do projeto | Alta | ⬜ M3 |
-| CHAT-04 | Chat | Histórico de conversas | Média | 🟡 em memória; falta persistir |
-| CHAT-05 | Chat | Citar reunião utilizada | Alta | 🟡 UI pronta; depende do RAG |
-| CHAT-06 | Chat | Citar tarefas/cards utilizados | Alta | 🟡 UI pronta; depende do RAG |
+| CHAT-01 | Chat | Chat individual por projeto | Alta | 🟡 é o Claude Code (`claude -p`) com sessão por projeto e system prompt do projeto (`project-chat.js`); falta verificar no app |
+| CHAT-02 | Chat | Reuniões do projeto no chat | Alta | 🟡 o system prompt leva os caminhos de transcrição, análise e PDF; o Claude lê com Read (sem embeddings — M3 continua para busca semântica) |
+| CHAT-03 | Chat | Tarefas do projeto no chat | Alta | 🟡 tarefas abertas entram no system prompt |
+| CHAT-04 | Chat | Histórico de conversas | Média | 🟡 persistido em `chat_messages` (synapse.db); "Nova conversa" apaga e solta a sessão |
+| CHAT-05 | Chat | Citar reunião utilizada | Alta | 🟡 o Claude cita no texto; as ferramentas usadas (arquivos lidos) aparecem acima da resposta |
+| CHAT-06 | Chat | Citar tarefas/cards utilizados | Alta | 🟡 idem, no texto |
+| CHAT-07 | Chat | Modo autônomo por projeto (bypass) | Alta | 🟡 interruptor no chat, desligado por padrão, com confirmação; `--dangerously-skip-permissions`; modo leitura só Read/Glob/Grep/web |
+| PRJ-07 | Projetos | Pasta de trabalho do projeto | Alta | 🟡 diretório onde o Claude trabalha no chat (repositório, documentos); vazio usa a pasta de reuniões |
 | UI-01 | Interface | Sidebar organizada por módulos | Alta | 🟢 |
 | UI-02 | Interface | Navegação Projeto → Dashboard | Alta | 🟢 |
 | UI-03 | Interface | Alternar Kanban/Reuniões/Grafo/Chat | Alta | 🟢 |

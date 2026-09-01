@@ -178,6 +178,7 @@
               <button class="mini" id="overview-edit" type="button">editar</button>
             </div>
             <p class="context-text" id="overview-context"></p>
+            <p class="context-path" id="overview-workdir"></p>
           </div>
         </div>
 
@@ -202,12 +203,27 @@
         </div>
 
         <div class="ptab ptab-chat">
-          <div class="chat">
+          <div class="chat" id="chat-box">
+            <!-- O chat é o Claude Code rodando no projeto: onde ele trabalha,
+                 em que modo, e o recomeço da conversa. -->
+            <div class="chat-tools">
+              <div class="chat-where">
+                <span class="chat-where-label">trabalhando em</span>
+                <span class="chat-where-path" id="chat-workdir">—</span>
+              </div>
+              <label class="chat-mode" id="chat-mode"
+                     title="Ligado, o Claude lê, escreve e executa comandos nesta máquina sem pedir permissão">
+                <input class="switch danger" type="checkbox" id="chat-bypass" />
+                <span>Modo autônomo</span>
+              </label>
+              <button class="btn ghost" id="chat-new" type="button">Nova conversa</button>
+            </div>
             <div class="chat-thread" id="chat-thread"></div>
             <form class="chat-bar" id="chat-form">
               <input class="input chat-input" id="chat-input" type="text" autocomplete="off"
-                     placeholder="Pergunte sobre as reuniões e tarefas deste projeto…" />
-              <button class="btn solid" type="submit">Enviar</button>
+                     placeholder="Pergunte sobre o projeto ou peça algo — o Claude tem as reuniões e as tarefas à mão" />
+              <button class="btn ghost" id="chat-stop" type="button" hidden>Parar</button>
+              <button class="btn solid" id="chat-send" type="submit">Enviar</button>
             </form>
           </div>
         </div>
@@ -361,6 +377,16 @@
           <textarea class="input" id="mp-context" rows="5"
             placeholder="O que é o projeto, quem participa, que tipo de documento você espera. Esse contexto orienta resumos, tarefas e o chat."></textarea>
         </label>
+        <div class="field">
+          <span>Pasta de trabalho</span>
+          <div class="field-row">
+            <input class="input" id="mp-workdir" type="text" readonly placeholder="vazio: a pasta das reuniões" />
+            <button class="btn ghost" id="mp-workdir-pick" type="button">Escolher</button>
+            <button class="icon-btn" id="mp-workdir-clear" type="button" title="Limpar">✕</button>
+          </div>
+          <em class="field-hint">Onde o Claude trabalha neste projeto — um repositório, uma pasta de
+            documentos. É o diretório do chat.</em>
+        </div>
         <p class="err" id="mp-error"></p>
         <div class="modal-actions">
           <button class="btn ghost danger" id="mp-delete" type="button" hidden>Excluir projeto</button>

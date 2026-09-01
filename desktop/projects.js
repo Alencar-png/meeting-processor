@@ -18,22 +18,38 @@ const db = require('./db');
 // pode virar nome de pasta no futuro; manter a mesma regra evita surpresa.
 const INVALID_CHARS = /[<>:"/\\|?*]/;
 
+const COLS = 'p.id, p.name, p.context, p.workdir, p.chat_bypass, p.chat_session_id';
+
+/** Converte a linha do banco para o vocabulário do resto do app. */
+function toProject(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    context: row.context,
+    workdir: row.workdir || '',
+    chatBypass: Boolean(row.chat_bypass),
+    chatSessionId: row.chat_session_id || '',
+    ...(row.count !== undefined ? { count: row.count } : {}),
+  };
+}
+
 /** Projetos com a contagem de reuniões de cada um. */
 function listProjects(dir) {
   const conn = db.open(dir);
   if (!conn) return [];
   return conn.prepare(`
-    SELECT p.id, p.name, p.context,
+    SELECT ${COLS},
            (SELECT COUNT(*) FROM meetings m WHERE m.project_id = p.id) AS count
       FROM projects p
      ORDER BY p.name COLLATE NOCASE
-  `).all();
+  `).all().map(toProject);
 }
 
 function getProject(dir, projectId) {
   const conn = db.open(dir);
   if (!conn || !projectId) return null;
-  return conn.prepare('SELECT id, name, context FROM projects WHERE id = ?').get(projectId) || null;
+  return toProject(conn.prepare(`SELECT ${COLS} FROM projects p WHERE p.id = ?`).get(projectId));
 }
 
 /** Projeto de uma reunião, ou null. */
@@ -62,7 +78,12 @@ function projectsByMeeting(dir) {
   return saida;
 }
 
-function saveProject(dir, { id, name, context }) {
+/**
+ * Cria ou edita o projeto. `workdir` é a pasta onde o Claude trabalha no chat
+ * deste projeto; omitido, não muda. O modo do chat e a sessão têm setters
+ * próprios — não passam pelo formulário.
+ */
+function saveProject(dir, { id, name, context, workdir }) {
   const conn = db.open(dir);
   if (!conn) return { ok: false, message: 'Pasta de saída indisponível.' };
 
@@ -78,11 +99,13 @@ function saveProject(dir, { id, name, context }) {
   if (repetido) return { ok: false, message: `Já existe um projeto chamado ${nome}.` };
 
   const texto = (context || '').trim();
+  const pasta = workdir === undefined ? undefined : String(workdir || '').trim();
 
   if (id) {
-    const atual = conn.prepare('SELECT id FROM projects WHERE id = ?').get(id);
+    const atual = conn.prepare('SELECT id, workdir FROM projects WHERE id = ?').get(id);
     if (!atual) return { ok: false, message: 'Projeto não encontrado.' };
-    conn.prepare('UPDATE projects SET name = ?, context = ? WHERE id = ?').run(nome, texto, id);
+    conn.prepare('UPDATE projects SET name = ?, context = ?, workdir = ? WHERE id = ?')
+      .run(nome, texto, pasta === undefined ? atual.workdir : pasta, id);
     return { ok: true, id };
   }
 
@@ -92,9 +115,25 @@ function saveProject(dir, { id, name, context }) {
   let n = 2;
   while (conn.prepare('SELECT 1 FROM projects WHERE id = ?').get(novoId)) novoId = `${base}-${n++}`;
 
-  conn.prepare('INSERT INTO projects (id, name, context, created_at) VALUES (?, ?, ?, ?)')
-    .run(novoId, nome, texto, Date.now());
+  conn.prepare('INSERT INTO projects (id, name, context, workdir, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(novoId, nome, texto, pasta || '', Date.now());
   return { ok: true, id: novoId };
+}
+
+/** Liga ou desliga o modo autônomo do chat deste projeto. */
+function setChatBypass(dir, projectId, enabled) {
+  const conn = db.open(dir);
+  if (!conn) return { ok: false, message: 'Pasta de saída indisponível.' };
+  const r = conn.prepare('UPDATE projects SET chat_bypass = ? WHERE id = ?').run(enabled ? 1 : 0, projectId);
+  return r.changes ? { ok: true } : { ok: false, message: 'Projeto não encontrado.' };
+}
+
+/** A sessão do Claude Code que o chat deste projeto continua ('' recomeça). */
+function setChatSession(dir, projectId, sessionId) {
+  const conn = db.open(dir);
+  if (!conn) return { ok: false, message: 'Pasta de saída indisponível.' };
+  const r = conn.prepare('UPDATE projects SET chat_session_id = ? WHERE id = ?').run(sessionId || '', projectId);
+  return r.changes ? { ok: true } : { ok: false, message: 'Projeto não encontrado.' };
 }
 
 /**
@@ -155,4 +194,6 @@ module.exports = {
   projectsByMeeting,
   renameMeeting,
   saveProject,
+  setChatBypass,
+  setChatSession,
 };

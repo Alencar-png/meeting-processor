@@ -12,6 +12,7 @@ const {
   app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, shell,
 } = require('electron');
 const { spawn } = require('node:child_process');
+const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -43,6 +44,10 @@ const transcriptImport = require('./transcript-import');
 const { readFileTolerant, unlinkTolerant } = require('./unicode-path');
 const promptsStore = require('./prompts-store');
 const { createUpdater } = require('./updater');
+const chatMessages = require('./chat-messages');
+const {
+  buildChatArgs, buildChatSystemPrompt, describeChatEvent, isMissingSession,
+} = require('./project-chat');
 const {
   DEFAULT_STEPS, DOC_KINDS, normalizeSteps, pendingDocKinds, planAfterTranscription,
 } = require('./pipeline-steps');
@@ -70,6 +75,7 @@ let mainWindow = null;
 let currentJob = null;    // transcrição em andamento
 let currentDocJob = null; // geração de PDF em andamento
 let currentExtraction = null; // análise da reunião em andamento (fim do pipeline)
+let currentChat = null;       // rodada do chat de projeto em andamento
 
 // --- Configurações persistidas ---------------------------------------------
 
@@ -833,14 +839,178 @@ ipcMain.handle('prompt:save', (_e, { kind, text }) =>
 ipcMain.handle('prompt:reset', (_e, kind) => promptsStore.resetPrompt(kind, { userDir: userPromptsDir() }));
 
 // Chat por projeto — o RAG entra no M3 (embeddings + Vector DB).
-ipcMain.handle('chat:ask', (_e, { projectId }) => {
-  const reunioes = workspace.listMeetings(outDir(), projectId).length;
-  return {
-    answer: reunioes
-      ? `O chat ainda não está ligado à memória do projeto. Este projeto tem ${reunioes} reunião(ões) transcrita(s) prontas para indexar — a busca semântica entra no próximo módulo.`
-      : 'Este projeto ainda não tem reuniões. Grave ou importe uma para eu ter o que ler.',
-    sources: [],
-  };
+// --- Chat do projeto --------------------------------------------------------
+
+/**
+ * As reuniões do projeto como o Claude precisa vê-las: nome, data e os
+ * caminhos que ele pode abrir com Read.
+ */
+function chatMeetings(dir, projectId) {
+  return workspace.listMeetings(dir, projectId).map((m) => {
+    const analise = m.dir && path.resolve(m.dir) !== path.resolve(dir) ? analysisPath(m.dir, false) : null;
+    return {
+      name: m.name,
+      recordedAt: m.recordedAt,
+      transcriptPath: m.transcriptPath,
+      analysisPath: analise && fs.existsSync(analise) ? analise : '',
+      documentPath: (m.files || []).find((f) => f.name.includes(' - Documento.'))?.path || '',
+    };
+  });
+}
+
+/** Uma rodada do chat: um `claude -p`, do envio da mensagem ao result. */
+function runChatTurn({ projectId, message, sessionId, resume, bypass, workdir, promptFile, addDirs }) {
+  return new Promise((resolve) => {
+    const args = buildChatArgs({ sessionId, resume, bypass, systemPromptFile: promptFile, addDirs });
+    const child = spawn(findClaude(), args, { cwd: workdir, windowsHide: true });
+    currentChat = { child, projectId, canceled: false };
+    child.stdin.write(message);
+    child.stdin.end();
+
+    let buffer = '';
+    let stderr = '';
+    const tools = [];
+    const textos = [];
+    let resultado = null;
+
+    child.stdout.on('data', (chunk) => {
+      buffer += chunk.toString();
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+      for (const line of lines) {
+        if (!line.trim().startsWith('{')) continue;
+        let eventos;
+        try { eventos = describeChatEvent(JSON.parse(line)); } catch { continue; }
+        for (const ev of eventos || []) {
+          if (ev.kind === 'tool') {
+            tools.push(ev.label);
+            send('chat:event', { projectId, kind: 'tool', label: ev.label });
+          } else if (ev.kind === 'text') {
+            textos.push(ev.text);
+            send('chat:event', { projectId, kind: 'text', text: ev.text });
+          } else if (ev.kind === 'result') {
+            resultado = ev;
+          }
+        }
+      }
+    });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    child.on('error', (err) => {
+      currentChat = null;
+      resolve({ ok: false, tools, message: `não foi possível executar o Claude Code (${err.code || err.message}).` });
+    });
+
+    child.on('close', (code) => {
+      const canceled = Boolean(currentChat?.canceled);
+      currentChat = null;
+      if (canceled) { resolve({ ok: false, canceled: true, tools, text: textos.join('\n\n'), message: 'Interrompido.' }); return; }
+      if (resultado && !resultado.isError) {
+        // Todos os trechos de texto, na ordem: é a narrativa da rodada, não só a última frase.
+        resolve({ ok: true, tools, text: textos.join('\n\n') || resultado.text });
+        return;
+      }
+      if (isMissingSession(stderr)) { resolve({ ok: false, missingSession: true, tools, message: stderr }); return; }
+      const motivo = resultado?.text || stderr.split('\n').filter(Boolean).pop() || `o Claude terminou com código ${code}`;
+      resolve({ ok: false, tools, message: `Não deu para responder: ${motivo}` });
+    });
+  });
+}
+
+/**
+ * Manda uma mensagem ao Claude no contexto do projeto.
+ *
+ * A pergunta entra no histórico antes de rodar; a resposta, depois. A sessão
+ * do Claude Code é criada na primeira mensagem e retomada nas seguintes — se
+ * ela sumiu (limpeza do ~/.claude, por exemplo), começa outra e segue.
+ */
+async function sendChat({ projectId, text }) {
+  if (currentChat) return { ok: false, message: 'O assistente ainda está respondendo.' };
+  const dir = outDir();
+  const project = projects.getProject(dir, projectId);
+  if (!project) return { ok: false, message: 'Projeto não encontrado.' };
+  const message = String(text || '').trim();
+  if (!message) return { ok: false, message: 'Escreva algo.' };
+
+  const workdir = project.workdir && fs.existsSync(project.workdir) ? project.workdir : dir;
+  const bypass = Boolean(project.chatBypass);
+  chatMessages.addMessage(dir, { projectId, role: 'user', text: message });
+
+  const systemPrompt = buildChatSystemPrompt({
+    project,
+    meetings: chatMeetings(dir, projectId),
+    tasks: workspace.listTasks(dir, projectId),
+    outputDir: dir,
+    workdir,
+    bypass,
+  });
+  // Por arquivo: como argumento, um texto grande não sobrevive à linha de
+  // comando do Windows.
+  const promptFile = path.join(app.getPath('temp'), `synapse-chat-${Date.now()}.md`);
+  fs.writeFileSync(promptFile, systemPrompt, 'utf-8');
+
+  let sessionId = project.chatSessionId;
+  let resume = Boolean(sessionId);
+  if (!sessionId) {
+    sessionId = randomUUID();
+    projects.setChatSession(dir, projectId, sessionId);
+  }
+  const addDirs = path.resolve(workdir) !== path.resolve(dir) ? [dir] : [];
+  const rodar = () => runChatTurn({ projectId, message, sessionId, resume, bypass, workdir, promptFile, addDirs });
+
+  let rodada = await rodar();
+  if (!rodada.ok && rodada.missingSession && resume) {
+    sessionId = randomUUID();
+    projects.setChatSession(dir, projectId, sessionId);
+    resume = false;
+    rodada = await rodar();
+  }
+  try { fs.unlinkSync(promptFile); } catch { /* já removido */ }
+
+  const resposta = rodada.text || rodada.message || '';
+  chatMessages.addMessage(dir, {
+    projectId, role: 'ai', text: resposta, tools: rodada.tools, bypass, error: !rodada.ok,
+  });
+  send('chat:event', {
+    projectId, kind: 'done', ok: rodada.ok, canceled: Boolean(rodada.canceled), text: resposta, tools: rodada.tools, bypass,
+  });
+  return { ok: true };
+}
+
+function stopChat() {
+  if (!currentChat) return { stopped: false };
+  currentChat.canceled = true;
+  const { child } = currentChat;
+  if (process.platform === 'win32') {
+    // O claude pode ter filhos (um comando em execução): derruba a árvore.
+    spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true });
+  } else {
+    child.kill();
+  }
+  return { stopped: true };
+}
+
+ipcMain.handle('chat:history', (_e, projectId) => chatMessages.listMessages(outDir(), projectId));
+ipcMain.handle('chat:send', (_e, payload) => sendChat(payload));
+ipcMain.handle('chat:stop', () => stopChat());
+ipcMain.handle('chat:clear', (_e, projectId) => {
+  // Recomeçar é apagar o que a tela mostra e soltar a sessão: a próxima
+  // mensagem abre uma conversa nova no Claude Code.
+  if (currentChat?.projectId === projectId) return { ok: false, message: 'Espere a resposta terminar.' };
+  const dir = outDir();
+  chatMessages.clearMessages(dir, projectId);
+  projects.setChatSession(dir, projectId, '');
+  return { ok: true };
+});
+ipcMain.handle('chat:setBypass', (_e, { projectId, enabled }) =>
+  projects.setChatBypass(outDir(), projectId, Boolean(enabled)));
+
+ipcMain.handle('dialog:pickWorkdir', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Pasta de trabalho do projeto',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return result.canceled ? null : result.filePaths[0];
 });
 
 /** Salva uma cópia de um arquivo da reunião onde o usuário escolher. */
@@ -915,8 +1085,9 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Trabalho órfão nunca: se a janela fecha no meio, derruba o job.
+// Trabalho órfão nunca: se a janela fecha no meio, derruba o job — e o chat.
 app.on('before-quit', () => {
+  if (currentChat) stopChat();
   if (!currentJob) return;
   currentJob.canceled = true;
   if (currentJob.containerName) {

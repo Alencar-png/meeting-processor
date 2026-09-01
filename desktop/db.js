@@ -24,11 +24,17 @@ const SCHEMA = `
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
 
+  -- workdir: onde o Claude trabalha no chat deste projeto (vazio = pasta de saída).
+  -- chat_bypass: o chat pode agir na máquina sem pedir permissão.
+  -- chat_session_id: a sessão do Claude Code que o chat continua.
   CREATE TABLE IF NOT EXISTS projects (
-    id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,
-    context    TEXT NOT NULL DEFAULT '',
-    created_at INTEGER NOT NULL
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    context         TEXT NOT NULL DEFAULT '',
+    workdir         TEXT NOT NULL DEFAULT '',
+    chat_bypass     INTEGER NOT NULL DEFAULT 0,
+    chat_session_id TEXT NOT NULL DEFAULT '',
+    created_at      INTEGER NOT NULL
   );
 
   -- A reunião em si é a pasta no disco; aqui fica o que a pasta não guarda.
@@ -51,10 +57,37 @@ const SCHEMA = `
     updated_at  INTEGER
   );
 
+  -- O que a tela do chat mostra. A conversa em si o Claude Code guarda na
+  -- sessão dele; aqui fica pergunta, resposta e o que ele fez no caminho.
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL,
+    content    TEXT NOT NULL,
+    meta       TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+  );
+
   CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_meeting ON tasks(meeting_id);
   CREATE INDEX IF NOT EXISTS idx_meetings_project ON meetings(project_id);
+  CREATE INDEX IF NOT EXISTS idx_chat_project ON chat_messages(project_id);
 `;
+
+// Colunas que entraram depois de o banco existir. CREATE TABLE IF NOT EXISTS
+// não altera tabela antiga: cada uma é conferida e adicionada se faltar.
+const LATER_COLUMNS = [
+  ['projects', 'workdir', "TEXT NOT NULL DEFAULT ''"],
+  ['projects', 'chat_bypass', 'INTEGER NOT NULL DEFAULT 0'],
+  ['projects', 'chat_session_id', "TEXT NOT NULL DEFAULT ''"],
+];
+
+function migrateColumns(db) {
+  for (const [table, column, ddl] of LATER_COLUMNS) {
+    const existentes = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    if (!existentes.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+}
 
 // Uma conexão por pasta: abrir o arquivo a cada leitura custaria caro numa
 // listagem que roda a cada navegação.
@@ -127,6 +160,7 @@ function open(dir) {
   fs.mkdirSync(dir, { recursive: true });
   const db = new DatabaseSync(path.join(dir, FILE));
   db.exec(SCHEMA);
+  migrateColumns(db);
   migrateJson(db, dir);
   conexoes.set(chave, db);
   return db;

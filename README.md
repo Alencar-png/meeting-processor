@@ -27,7 +27,11 @@ trabalho pode ser **minimizada** — o progresso segue num chip na barra lateral
 e o app fica livre para uso.
 
 O centro é o **projeto**: cada um tem seu Kanban, suas reuniões, seus
-documentos e um texto de contexto que orienta o tom do que é gerado.
+documentos, um texto de contexto que orienta o tom do que é gerado — e um
+**chat**, que é o Claude Code rodando com tudo isso à mão. Dê ao projeto uma
+**pasta de trabalho** (um repositório, uma pasta de documentos) e o chat passa
+a trabalhar nela; ligue o **modo autônomo** e ele age na máquina sem pedir a
+cada passo. Desligado, só lê e pesquisa.
 
 ---
 
@@ -174,6 +178,8 @@ desktop/                   # app Electron (Synapse) — veja desktop/README.md
 ├── pipeline-steps.js      # quais etapas rodam depois da transcrição
 ├── prompts-store.js       # prompts editados em Configurações, por cima do padrão
 ├── updater.js             # atualização pelo app: git pull + reinstalar o que mudou
+├── project-chat.js        # o chat: argumentos do claude -p, system prompt do projeto, eventos
+├── chat-messages.js       # histórico do chat por projeto (synapse.db)
 ├── unicode-path.js        # caminhos com acento nas duas formas do Unicode
 ├── prompts/               # prompts de extração e documentos, fora do código
 └── renderer/              # interface

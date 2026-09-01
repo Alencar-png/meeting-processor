@@ -721,6 +721,53 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
   overflow: hidden;
 }
 
+/* Barra do chat: onde o Claude está trabalhando e em que modo. */
+.chat-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-raised);
+}
+.chat-where { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.chat-where-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted-dim);
+}
+.chat-where-path {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.chat-mode:has(input:checked) { color: var(--red); }
+.chat-tools .btn { padding: 7px 12px; font-size: 11px; }
+
+/* Interruptor perigoso: ligado, a luz é vermelha — o Claude age sem pedir. */
+.switch.danger:checked {
+  background: rgba(251, 113, 133, 0.22);
+  border-color: var(--red);
+  box-shadow: 0 0 18px rgba(251, 113, 133, 0.35);
+}
+.switch.danger:checked::before { background: var(--red); }
+.chat.is-bypass { border-color: rgba(251, 113, 133, 0.45); }
+.chat.is-bypass .chat-tools { border-bottom-color: rgba(251, 113, 133, 0.35); }
+
 .chat-thread {
   flex: 1;
   overflow-y: auto;
@@ -773,6 +820,36 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 .src-chip.task:hover { border-color: var(--violet-dim); }
 
 .msg-thinking .bubble { color: var(--muted-dim); font-style: italic; }
+.msg-error .bubble { border-color: rgba(251, 113, 133, 0.45); color: var(--muted); }
+
+/* O que o Claude fez no caminho da resposta: uma linha por ferramenta. */
+.msg-tools { display: flex; flex-direction: column; gap: 2px; padding: 0 4px; }
+.msg-tool {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-tool::before { content: '▸ '; color: var(--violet); }
+.msg-tool.is-live::before { color: var(--cyan); }
+.msg-badge {
+  align-self: flex-start;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--red);
+}
+.bubble code {
+  font-family: var(--mono);
+  font-size: 12px;
+  background: var(--bg-deep);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.bubble:empty::after { content: '…'; color: var(--muted-dim); }
 
 .chat-bar {
   display: flex;
@@ -1141,8 +1218,13 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
   text-transform: uppercase;
   color: var(--muted-dim);
 }
-.field-row { display: flex; gap: 10px; }
+.field-row { display: flex; gap: 10px; align-items: center; }
 .field-row .field { flex: 1; min-width: 0; }
+.field-row .input { flex: 1; min-width: 0; }
+.field-row .icon-btn { flex: none; }
+.field-hint { font-style: normal; font-size: 12px; line-height: 1.45; color: var(--muted-dim); }
+.context-path { margin: 8px 0 0; font-family: var(--mono); font-size: 11px; color: var(--muted-dim); overflow-wrap: anywhere; }
+.context-path:empty { display: none; }
 
 .mt-origin { margin: 0 0 8px; font-family: var(--mono); font-size: 11px; color: var(--violet); }
 

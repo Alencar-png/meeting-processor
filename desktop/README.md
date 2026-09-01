@@ -126,6 +126,25 @@ e um clique no chip traz a tela de volta. Ao terminar, o aviso único aparece
 do mesmo jeito — só não puxa a pessoa para o projeto se ela estava em outra
 coisa.
 
+### O chat do projeto
+
+O chat é o Claude Code (`claude -p`) rodando na **pasta de trabalho** do
+projeto — um campo do projeto; vazio, usa a pasta das reuniões. Cada mensagem
+vai com um system prompt montado na hora (`project-chat.js`): nome e contexto
+do projeto, os caminhos de transcrição, `analise.json` e PDF de cada reunião,
+as tarefas abertas do Kanban e o modo em vigor. A conversa continua entre
+mensagens e entre aberturas do app pela sessão do próprio Claude Code
+(`--session-id` na primeira, `--resume` depois); se a sessão sumiu, o app abre
+outra e segue. O que a tela mostra fica em `chat_messages`, no `synapse.db`.
+
+Dois modos, por projeto, no alto do chat:
+
+- **Leitura** (padrão): `--permission-mode dontAsk` com `Read, Glob, Grep,
+  WebSearch, WebFetch`. O Claude consulta e responde; não escreve nem executa.
+- **Autônomo**: `--dangerously-skip-permissions`. O Claude age na máquina sem
+  pedir a cada passo. Liga com confirmação, fica vermelho enquanto ativo, e o
+  system prompt pede aviso antes de algo destrutivo. **Parar** derruba a rodada.
+
 ## Onde ficam os dados
 
 As transcrições e os documentos são arquivos na pasta de saída, legíveis sem
@@ -159,6 +178,8 @@ desktop/
 ├── pipeline-steps.js    # quais etapas rodam depois da transcrição (Configurações)
 ├── prompts-store.js     # prompts editados por cima do padrão (Configurações → Prompts)
 ├── updater.js           # Configurações → Sobre: git pull --ff-only, npm/pip se mudaram, relaunch
+├── project-chat.js      # chat do projeto: system prompt, args do claude -p, tradução do stream
+├── chat-messages.js     # histórico do chat (tabela chat_messages)
 ├── transcript-import.js # texto e legenda viram reunião (.txt .md .srt .vtt)
 ├── library.js           # a pasta de saída lida como biblioteca (CRUD)
 ├── db.js                # banco do workspace (SQLite) e migração dos JSONs

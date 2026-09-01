@@ -19,6 +19,7 @@ const listeners = {
   'doc:progress': new Set(),
   'doc:done': new Set(),
   'update:log': new Set(),
+  'chat:event': new Set(),
 };
 
 for (const channel of Object.keys(listeners)) {
@@ -82,8 +83,13 @@ contextBridge.exposeInMainWorld('api', {
   updateApply: () => ipcRenderer.invoke('update:apply'),
   updateRestart: () => ipcRenderer.invoke('update:restart'),
 
-  // --- Chat por projeto ---
-  chatAsk: (payload) => ipcRenderer.invoke('chat:ask', payload),
+  // --- Chat por projeto (Claude Code no contexto do projeto) ---
+  chatHistory: (projectId) => ipcRenderer.invoke('chat:history', projectId),
+  chatSend: (payload) => ipcRenderer.invoke('chat:send', payload),
+  chatStop: () => ipcRenderer.invoke('chat:stop'),
+  chatClear: (projectId) => ipcRenderer.invoke('chat:clear', projectId),
+  chatSetBypass: (payload) => ipcRenderer.invoke('chat:setBypass', payload),
+  pickWorkdir: () => ipcRenderer.invoke('dialog:pickWorkdir'),
 
   // --- Sistema ---
   pickOutputDir: () => ipcRenderer.invoke('dialog:pickOutputDir'),

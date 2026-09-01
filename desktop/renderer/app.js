@@ -5,7 +5,8 @@
  *
  * Navegação por módulos (Início, Projetos, Biblioteca, Configurações),
  * dashboard e kanban por projeto, gravação/importação com pipeline,
- * grafo de conexões e chat RAG. Todo acesso a dados passa por window.api.
+ * grafo de conexões e o chat do projeto — o Claude Code rodando com o contexto
+ * dele. Todo acesso a dados passa por window.api.
  */
 
 const $ = (id) => document.getElementById(id);
@@ -29,7 +30,6 @@ let pendingKind = 'video';   // 'video' ou 'transcript'
 let recTimer = null;
 let recStartedAt = 0;
 let jobProjectId = '';
-const chatHistories = new Map();
 let libView = { search: '', filter: 'todas', group: '' };
 
 // --- Formatação ---------------------------------------------------------------
@@ -546,6 +546,7 @@ async function renderOverview() {
   }
 
   $('overview-context').textContent = p.context || 'Sem contexto ainda — edite para orientar resumos, tarefas e o chat.';
+  $('overview-workdir').textContent = p.workdir ? `Pasta de trabalho: ${p.workdir}` : '';
 }
 
 // --- Projeto: kanban -----------------------------------------------------------------
@@ -704,75 +705,181 @@ async function renderGraph() {
 
 // --- Projeto: chat -----------------------------------------------------------------
 
-function chatHistory() {
-  if (!chatHistories.has(currentProjectId)) chatHistories.set(currentProjectId, []);
-  return chatHistories.get(currentProjectId);
+/**
+ * O chat é o Claude Code rodando no projeto.
+ *
+ * O histórico vem do banco. O que está acontecendo agora — texto chegando,
+ * ferramentas em uso — vive em `chatLive` até a rodada fechar; aí o processo
+ * principal grava a resposta e a tela recarrega do banco.
+ */
+let chatLive = null;   // { projectId, texts, toolsBox, bubble, box }
+
+const projectById = (id) => projects.find((p) => p.id === id);
+
+/** Texto do assistente: **negrito** e `código`; o resto é texto puro. */
+function renderRichText(el, text) {
+  el.replaceChildren(...String(text || '').split(/(\*\*.+?\*\*|`[^`]+`)/g).map((part) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      const b = document.createElement('strong'); b.textContent = part.slice(2, -2); return b;
+    }
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      const c = document.createElement('code'); c.textContent = part.slice(1, -1); return c;
+    }
+    return document.createTextNode(part);
+  }));
 }
 
-function renderChat() {
+function toolLine(label, live = false) {
+  const li = document.createElement('span');
+  li.className = `msg-tool${live ? ' is-live' : ''}`;
+  li.textContent = label;
+  return li;
+}
+
+function messageBox(msg) {
+  const box = document.createElement('div');
+  box.className = `msg msg-${msg.role}${msg.error ? ' msg-error' : ''}`;
+  if (msg.role === 'ai' && msg.bypass) {
+    const badge = document.createElement('span');
+    badge.className = 'msg-badge';
+    badge.textContent = 'modo autônomo';
+    box.append(badge);
+  }
+  if (msg.tools?.length) {
+    const tools = document.createElement('div');
+    tools.className = 'msg-tools';
+    for (const t of msg.tools) tools.append(toolLine(t));
+    box.append(tools);
+  }
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  renderRichText(bubble, msg.text);
+  box.append(bubble);
+  return box;
+}
+
+function renderChatTools(p) {
+  $('chat-workdir').textContent = p.workdir || 'pasta das reuniões — defina uma pasta de trabalho ao editar o projeto';
+  $('chat-workdir').title = p.workdir || '';
+  $('chat-bypass').checked = Boolean(p.chatBypass);
+  $('chat-box').classList.toggle('is-bypass', Boolean(p.chatBypass));
+}
+
+function setChatBusy(busy) {
+  $('chat-input').disabled = busy;
+  $('chat-send').hidden = busy;
+  $('chat-stop').hidden = !busy;
+  $('chat-new').disabled = busy;
+}
+
+async function renderChat() {
+  const p = projectById(currentProjectId);
+  if (!p) return;
+  renderChatTools(p);
+
   const thread = $('chat-thread');
   thread.replaceChildren();
-  const history = chatHistory();
+  const history = await window.api.chatHistory(currentProjectId);
+  const live = chatLive && chatLive.projectId === currentProjectId ? chatLive : null;
 
-  if (!history.length) {
+  if (!history.length && !live) {
     const empty = document.createElement('p');
     empty.className = 'chat-empty';
-    empty.textContent = 'Pergunte qualquer coisa sobre este projeto — as respostas citam as reuniões e tarefas usadas como fonte.';
+    empty.textContent = p.workdir
+      ? 'Este é o Claude Code dentro do projeto: ele conhece as reuniões, as tarefas e a pasta de trabalho. Pergunte, peça um resumo, ou peça para fazer.'
+      : 'Este é o Claude Code dentro do projeto: ele conhece as reuniões e as tarefas. Defina uma pasta de trabalho no projeto para ele também mexer nos seus arquivos.';
     thread.append(empty);
-    return;
   }
-
-  for (const msg of history) {
-    const box = document.createElement('div');
-    box.className = `msg msg-${msg.role}${msg.thinking ? ' msg-thinking' : ''}`;
-    const bubble = document.createElement('div');
-    bubble.className = 'bubble';
-    // Só **negrito** é interpretado; o resto é texto puro.
-    bubble.replaceChildren(...msg.text.split(/\*\*(.+?)\*\*/g).map((part, i) => {
-      if (i % 2) { const b = document.createElement('strong'); b.textContent = part; return b; }
-      return document.createTextNode(part);
-    }));
-    box.append(bubble);
-
-    if (msg.sources?.length) {
-      const srcs = document.createElement('div');
-      srcs.className = 'msg-sources';
-      for (const s of msg.sources) {
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = `src-chip ${s.type}`;
-        chip.textContent = s.label;
-        chip.addEventListener('click', async () => {
-          if (s.type === 'meeting') openDrawer(s.id);
-          else {
-            const all = await window.api.listTasks(currentProjectId);
-            const t = all.find((x) => x.id === s.id);
-            if (t) openTaskModal(t);
-          }
-        });
-        srcs.append(chip);
-      }
-      box.append(srcs);
-    }
-    thread.append(box);
-  }
+  for (const msg of history) thread.append(messageBox(msg));
+  if (live) thread.append(live.box);
   thread.scrollTop = thread.scrollHeight;
+  setChatBusy(Boolean(live));
+}
+
+/** A resposta em construção: ferramentas vão entrando, o texto vai crescendo. */
+function startLive(projectId, bypass) {
+  const box = messageBox({ role: 'ai', text: '', tools: [], bypass });
+  const toolsBox = document.createElement('div');
+  toolsBox.className = 'msg-tools';
+  box.insertBefore(toolsBox, box.querySelector('.bubble'));
+  return { projectId, texts: [], toolsBox, bubble: box.querySelector('.bubble'), box };
 }
 
 $('chat-form').addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (chatLive) return;
   const q = $('chat-input').value.trim();
   if (!q) return;
+  const p = projectById(currentProjectId);
+  if (!p) return;
   $('chat-input').value = '';
-  const history = chatHistory();
-  history.push({ role: 'user', text: q });
-  const thinking = { role: 'ai', text: 'consultando a memória do projeto…', thinking: true };
-  history.push(thinking);
-  renderChat();
 
-  const result = await window.api.chatAsk({ projectId: currentProjectId, question: q });
-  history.splice(history.indexOf(thinking), 1);
-  history.push({ role: 'ai', text: result.answer, sources: result.sources });
+  const thread = $('chat-thread');
+  thread.querySelector('.chat-empty')?.remove();
+  thread.append(messageBox({ role: 'user', text: q }));
+  chatLive = startLive(currentProjectId, p.chatBypass);
+  thread.append(chatLive.box);
+  thread.scrollTop = thread.scrollHeight;
+  setChatBusy(true);
+
+  const r = await window.api.chatSend({ projectId: currentProjectId, text: q });
+  if (!r.ok) {
+    chatLive = null;
+    toast(r.message);
+    renderChat();
+  }
+});
+
+window.api.on('chat:event', (ev) => {
+  const live = chatLive && chatLive.projectId === ev.projectId ? chatLive : null;
+  if (ev.kind === 'done') {
+    chatLive = null;
+    if (view === 'project' && currentTab === 'chat' && currentProjectId === ev.projectId) {
+      renderChat();
+    } else {
+      const nome = projectById(ev.projectId)?.name || 'projeto';
+      toast(`O assistente respondeu em <strong>${nome}</strong>.`);
+    }
+    return;
+  }
+  if (!live) return;
+  if (ev.kind === 'tool') {
+    for (const t of live.toolsBox.querySelectorAll('.is-live')) t.classList.remove('is-live');
+    live.toolsBox.append(toolLine(ev.label, true));
+  } else if (ev.kind === 'text') {
+    live.texts.push(ev.text);
+    renderRichText(live.bubble, live.texts.join('\n\n'));
+  }
+  const thread = $('chat-thread');
+  thread.scrollTop = thread.scrollHeight;
+});
+
+$('chat-stop').addEventListener('click', () => window.api.chatStop());
+
+$('chat-bypass').addEventListener('change', async (e) => {
+  const ligar = e.target.checked;
+  if (ligar) {
+    const ok = await confirmDanger({
+      title: 'Ligar o modo autônomo neste projeto?',
+      message: 'O Claude vai poder ler, escrever e executar comandos na sua máquina sem pedir permissão a cada passo — na pasta de trabalho e onde mais precisar. Ele avisa antes de algo destrutivo, mas não espera resposta. Desligue quando não precisar.',
+      confirmLabel: 'Ligar modo autônomo',
+    });
+    if (!ok) { e.target.checked = false; return; }
+  }
+  await window.api.chatSetBypass({ projectId: currentProjectId, enabled: ligar });
+  await refreshProjects();
+  renderChatTools(projectById(currentProjectId));
+});
+
+$('chat-new').addEventListener('click', async () => {
+  const ok = await confirmDanger({
+    title: 'Começar uma conversa nova?',
+    message: 'O histórico deste chat é apagado e o Claude deixa de lembrar o que foi dito aqui. As reuniões e tarefas continuam no lugar.',
+    confirmLabel: 'Nova conversa',
+  });
+  if (!ok) return;
+  const r = await window.api.chatClear(currentProjectId);
+  if (!r.ok) { toast(r.message); return; }
   renderChat();
 });
 
@@ -1212,6 +1319,7 @@ function openProjectModal(p = null) {
   $('mp-title').textContent = p ? 'Editar projeto' : 'Novo projeto';
   $('mp-name').value = p?.name || '';
   $('mp-context').value = p?.context || '';
+  $('mp-workdir').value = p?.workdir || '';
   $('mp-error').textContent = '';
   $('mp-delete').hidden = !p;
   openModal('modal-project');
@@ -1222,12 +1330,19 @@ $('mp-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const r = await window.api.saveProject({
     id: editingProjectId, name: $('mp-name').value, context: $('mp-context').value,
+    workdir: $('mp-workdir').value,
   });
   if (!r.ok) { $('mp-error').textContent = r.message; return; }
   closeModals();
   await refreshProjects();
   openProject(r.id, editingProjectId ? currentTab : 'overview');
 });
+
+$('mp-workdir-pick').addEventListener('click', async () => {
+  const dir = await window.api.pickWorkdir();
+  if (dir) $('mp-workdir').value = dir;
+});
+$('mp-workdir-clear').addEventListener('click', () => { $('mp-workdir').value = ''; });
 
 $('mp-delete').addEventListener('click', async () => {
   const p = projects.find((x) => x.id === editingProjectId);

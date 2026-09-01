@@ -25,7 +25,7 @@ const METADATA_FILE = 'meeting.json';
 // Sufixos dos documentos derivados — removidos para achar a reunião de origem.
 // "Resumo executivo" continua na lista por causa dos arquivos já gerados antes
 // de o resumo deixar de ser sempre executivo.
-const DERIVED_SUFFIXES = [' - Tarefas', ' - Resumo executivo', ' - Resumo'];
+const DERIVED_SUFFIXES = [' - Documento', ' - Tarefas', ' - Resumo executivo', ' - Resumo'];
 
 // Caracteres proibidos em nome de arquivo no Windows.
 const INVALID_CHARS = /[<>:"/\\|?*]/;
@@ -73,12 +73,14 @@ function finish(meeting) {
     meta,
     files,
     modified: files.reduce((max, f) => Math.max(max, f.modified), 0),
-    // O .md é a fonte para gerar tarefas e resumo: tem os timestamps.
+    // O .md é a fonte para gerar o documento e as tarefas: tem os timestamps.
     transcript: files.find((f) => f.ext === 'md')?.path
       || files.find((f) => f.kind === 'transcricao')?.path,
-    hasTarefas: files.some((f) => f.name.includes(' - Tarefas.')),
-    hasResumo: files.some((f) => f.name.includes(' - Resumo.')
-      || f.name.includes(' - Resumo executivo.')),
+    // Reuniões de antes do documento único têm os dois PDFs separados; com
+    // ambos no lugar, contam como documentadas.
+    hasDocumento: files.some((f) => f.name.includes(' - Documento.'))
+      || (files.some((f) => f.name.includes(' - Tarefas.'))
+        && files.some((f) => f.name.includes(' - Resumo.') || f.name.includes(' - Resumo executivo.'))),
   };
 }
 

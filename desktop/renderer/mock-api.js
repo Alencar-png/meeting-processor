@@ -27,10 +27,21 @@
     nativeModel: 'models/ggml-large-v3-turbo.bin',
     model: 'large-v3',
     language: 'pt',
+    steps: { kanban: true, documento: true },
   };
 
   let seq = 100;
   const nid = (p) => `${p}-${seq++}`;
+
+  const mockPrompts = {
+    analise: {
+      label: 'Análise da reunião (documento e tarefas)',
+      text: 'Leia `{{TRANSCRICAO}}` e grave a análise da reunião em `{{JSON}}`.\n\n## Contexto\n\n{{CONTEXTO}}',
+      placeholders: ['{{TRANSCRICAO}}', '{{CONTEXTO}}', '{{JSON}}'],
+      required: ['{{TRANSCRICAO}}', '{{JSON}}'],
+      custom: null,
+    },
+  };
 
   let projects = [
     { id: 'p-alpha', name: 'Projeto Alpha', context: 'Plataforma de autenticação e onboarding. Time: Ana (PM), Bruno (backend), Carla (frontend). Documentos vão para o time todo: linguagem direta, sem jargão executivo.' },
@@ -55,7 +66,7 @@
       id: 'm-1808', projectId: 'p-alpha', name: 'Weekly Produto 18/08',
       recordedAt: now - 4 * H, duration: 3480, segments: 214,
       model: 'large-v3-turbo', language: 'pt', source: 'weekly-produto.mkv',
-      hasResumo: true, hasTarefas: true, transcript: T,
+      hasDocumento: true, transcript: T,
       concepts: ['Autenticação', 'Onboarding'],
       insights: ['a equipe optou por **OAuth2** no lugar do JWT decidido antes', 'o e-mail de confirmação do onboarding está caindo em spam'],
     },
@@ -63,7 +74,7 @@
       id: 'm-1208', projectId: 'p-alpha', name: 'Decisão de arquitetura 12/08',
       recordedAt: now - 6 * 24 * H, duration: 2712, segments: 158,
       model: 'large-v3-turbo', language: 'pt', source: 'arquitetura.mp4',
-      hasResumo: true, hasTarefas: false, transcript: T,
+      hasDocumento: false, transcript: T,
       concepts: ['Autenticação', 'API'],
       insights: ['foi decidido utilizar **JWT** inicialmente para a autenticação'],
     },
@@ -71,7 +82,7 @@
       id: 'm-0908', projectId: 'p-beta', name: 'Kickoff migração AWS',
       recordedAt: now - 9 * 24 * H, duration: 5405, segments: 341,
       model: 'large-v3', language: 'pt', source: 'kickoff-aws.mkv',
-      hasResumo: false, hasTarefas: true, transcript: T,
+      hasDocumento: false, transcript: T,
       concepts: ['Deploy AWS', 'Custos'],
       insights: ['o deploy será feito por etapas, começando pelo serviço de mídia'],
     },
@@ -79,7 +90,7 @@
       id: 'm-solo', projectId: '', name: 'Conversa com fornecedor',
       recordedAt: now - 12 * 24 * H, duration: 1934, segments: 96,
       model: 'large-v3-turbo', language: 'pt', source: 'fornecedor.mkv',
-      hasResumo: false, hasTarefas: false, transcript: T, concepts: [], insights: [],
+      hasDocumento: false, transcript: T, concepts: [], insights: [],
     },
   ];
 
@@ -104,8 +115,8 @@
       ...Array.from({ length: 3 }, (_, i) => ({ at: 250 + i * 300, key: 'audio', progress: (i + 1) * 33.4 })),
       ...Array.from({ length: 8 }, (_, i) => ({ at: 1400 + i * 380, key: 'transcription', progress: (i + 1) * 12.5, detail: `whisper.cpp · segmento ${i * 21 + 4}` })),
       { at: 4600, key: 'export', progress: 100 },
-      { at: 5100, key: 'extract', progress: 40, detail: 'Claude lendo a transcrição' },
-      { at: 6100, key: 'extract', progress: 100, detail: 'resumo e tarefas extraídos' },
+      { at: 5100, key: 'analyze', progress: 40, detail: 'Claude lendo a transcrição' },
+      { at: 6100, key: 'analyze', progress: 100, detail: 'análise pronta' },
     ];
     for (const s of stages) {
       jobTimers.push(setTimeout(() => emit('job:event', { event: 'stage', ...s }), s.at));
@@ -115,18 +126,23 @@
         id: nid('m'), projectId: projectId || '', name,
         recordedAt: Date.now(), duration: 1934, segments: 118,
         model: 'large-v3-turbo', language: settings.language, source,
-        hasResumo: true, hasTarefas: true, transcript: T,
+        hasDocumento: true, transcript: T,
         concepts: ['Onboarding'],
         insights: ['ficou combinado repetir o teste de onboarding na quinta'],
       };
       meetings.unshift(meeting);
-      // AI-02: as ações extraídas viram cards automaticamente.
-      const created = projectId ? [
+      // AI-02: as ações extraídas viram cards automaticamente — se a etapa
+      // do Kanban estiver ligada em Configurações.
+      const created = projectId && settings.steps.kanban ? [
         { id: nid('t'), projectId, meetingId: meeting.id, title: 'Ajustar e-mail de confirmação', description: 'Extraída automaticamente da reunião.', assignee: 'Bruno', priority: 'high', status: 'backlog', createdAt: Date.now() },
         { id: nid('t'), projectId, meetingId: meeting.id, title: 'Repetir teste com 5 usuários', description: 'Extraída automaticamente da reunião.', assignee: 'Carla', priority: 'medium', status: 'backlog', createdAt: Date.now() },
       ] : [];
       tasks.push(...created);
-      emit('job:event', { event: 'done', meetingId: meeting.id, tasksCreated: created.length });
+      // O documento, se ligado em Configurações, vem em seguida; a janela espera.
+      const docs = ['documento'].filter((k) => settings.steps[k]);
+      meeting.hasDocumento = false;
+      emit('job:event', { event: 'done', meetingId: meeting.id, tasksCreated: created.length, docs });
+      if (docs.length) jobTimers.push(setTimeout(() => window.api.generateDoc({ meetingId: meeting.id, kinds: docs }), 900));
     }, 6600));
     return { started: true };
   }
@@ -210,6 +226,9 @@
     },
 
     // --- Tarefas (Kanban) ---
+    async tasksForMeeting(meetingId) {
+      return tasks.filter((t) => t.meetingId === meetingId);
+    },
     async listTasks(projectId) {
       return tasks.filter((t) => t.projectId === projectId)
         .map((t) => ({ ...t, meeting: meetings.find((m) => m.id === t.meetingId) || null }));
@@ -250,23 +269,54 @@
     },
 
     // --- Documentos ---
-    async generateDoc({ kind, meetingId }) {
+    async generateDoc({ meetingId, kinds = ['documento'] }) {
       const passos = ['lendo a transcrição', 'estruturando o documento', 'convertendo em PDF'];
+      const fila = kinds.flatMap((kind) => passos.map((description) => ({ kind, description })));
       let i = 0;
       const timer = setInterval(() => {
-        if (i < passos.length) emit('doc:progress', { description: passos[i++] });
+        if (i < fila.length) emit('doc:progress', fila[i++]);
         else {
           clearInterval(timer);
           const m = meetings.find((x) => x.id === meetingId);
-          if (m) {
-            if (kind === 'tarefas') m.hasTarefas = true;
-            else m.hasResumo = true;
-          }
-          emit('doc:done', { ok: true, kind, meetingId });
+          if (m && kinds.includes('documento')) m.hasDocumento = true;
+          emit('doc:done', { ok: true, kinds, meetingId });
         }
-      }, 900);
+      }, 700);
       return { started: true };
     },
+
+    // --- Prompts editáveis ---
+    async listPrompts() {
+      return Object.entries(mockPrompts).map(([kind, { label }]) => ({ kind, label }));
+    },
+    async getPrompt(kind) {
+      const spec = mockPrompts[kind];
+      return { kind, label: spec.label, text: spec.custom ?? spec.text, isCustom: spec.custom != null, placeholders: spec.placeholders, required: spec.required };
+    },
+    async savePrompt(kind, text) {
+      const spec = mockPrompts[kind];
+      if (!text.trim()) return { ok: false, message: 'O prompt não pode ficar vazio.' };
+      const faltando = spec.required.filter((ph) => !text.includes(ph));
+      if (faltando.length) return { ok: false, message: `O prompt precisa manter ${faltando.join(', ')}.` };
+      spec.custom = text === spec.text ? null : text;
+      return { ok: true, isCustom: spec.custom != null };
+    },
+    async resetPrompt(kind) { mockPrompts[kind].custom = null; return { ok: true, isCustom: false }; },
+
+    // --- Atualização do app ---
+    async updateVersion() { return { ok: true, commit: 'mock123', date: new Date().toISOString(), subject: 'mock', branch: 'master' }; },
+    async updateCheck() {
+      await new Promise((r) => setTimeout(r, 600));
+      return { ok: true, behind: 2, ahead: 0, dirty: false, changes: ['feat: minimizar a tela de processamento', 'fix: acento no nome'], message: '2 atualizações disponíveis.' };
+    },
+    async updateApply() {
+      for (const linha of ['Trazendo 2 commit(s) de origin/master…', 'Atualizado: mock123 → mock456.']) {
+        await new Promise((r) => setTimeout(r, 500));
+        emit('update:log', linha);
+      }
+      return { ok: true, updated: true, message: 'Atualizado. Reinicie o Synapse para usar a nova versão.' };
+    },
+    async updateRestart() { window.location.reload(); },
 
     // --- Chat RAG (por projeto) ---
     async chatAsk({ projectId, question }) {

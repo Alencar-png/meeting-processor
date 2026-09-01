@@ -46,8 +46,7 @@ function toMeeting(meeting, projeto) {
     model: meta.model || '',
     language: meta.language || '',
     source: meta.source_file || '',
-    hasResumo: meeting.hasResumo,
-    hasTarefas: meeting.hasTarefas,
+    hasDocumento: meeting.hasDocumento,
     // Caminhos ficam aqui para abrir/baixar arquivo sem uma segunda chamada.
     files: meeting.files,
     transcriptPath: meeting.transcript || '',
@@ -112,6 +111,12 @@ function listTasks(dir, projectId) {
   });
 }
 
+/** As tarefas que nasceram de uma reunião — o vínculo visível no painel dela. */
+function listTasksForMeeting(dir, meetingId) {
+  if (!dir || !meetingId) return [];
+  return tasks.listTasks(dir).filter((t) => t.meetingId === meetingId);
+}
+
 /**
  * Descobre qual reunião acabou de ser criada a partir dos arquivos que o
  * pipeline gravou: o id da reunião é o nome da pasta que os contém.
@@ -145,6 +150,7 @@ module.exports = {
   listMeetings,
   listProjects,
   listTasks,
+  listTasksForMeeting,
   meetingIdFromFiles,
   overview,
   recordedAt,

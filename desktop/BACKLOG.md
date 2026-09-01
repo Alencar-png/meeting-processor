@@ -17,11 +17,11 @@ Status real do produto. 🟢 = pronto e verificado no app com dados reais,
 | KAN-04 | Kanban | Drag-and-drop entre colunas | Alta | 🟢 |
 | KAN-05 | Kanban | Abrir detalhes do card | Alta | 🟢 |
 | KAN-06 | Kanban | Criar/editar/excluir tarefa manual | Alta | 🟢 |
-| KAN-07 | Kanban | Vincular card à reunião de origem | Alta | 🟢 |
-| AI-01 | IA | Extrair ações da reunião | Alta | 🟢 (`prompts/extrair.md`, saída JSON) |
+| KAN-07 | Kanban | Vincular card à reunião de origem | Alta | 🟢 (e o painel da reunião lista as tarefas dela, abrindo o card) |
+| AI-01 | IA | Analisar a reunião (uma leitura só) | Alta | 🟡 `prompts/analise.md` → `analise.json`; cards e PDF saem dela; falta verificar no app com reunião real |
 | AI-02 | IA | Criar automaticamente cards das ações | Alta | 🟢 (roda ao fim do pipeline, antes do aviso de pronto) |
-| AI-03 | IA | Gerar resumo da reunião | Alta | 🟢 (PDF sob demanda) |
-| AI-04 | IA | Resumo PDF dentro do projeto | Alta | 🟢 (painel da reunião) |
+| AI-03 | IA | Gerar o documento da reunião | Alta | 🟡 PDF montado pelo app a partir da análise (`document-html.js`); a tabela de tarefas é a mesma do Kanban; falta verificar no app |
+| AI-04 | IA | Documento PDF dentro do projeto | Alta | 🟢 (painel da reunião) |
 | AI-05 | IA | Identificar contexto entre reuniões | Média | ⬜ M3 |
 | REC-01 | Gravação | Iniciar gravação dentro do projeto | Alta | 🟢 (microfone + áudio do sistema) |
 | REC-02 | Gravação | Pausar/continuar | Média | ⬜ |
@@ -45,6 +45,10 @@ Status real do produto. 🟢 = pronto e verificado no app com dados reais,
 | UI-02 | Interface | Navegação Projeto → Dashboard | Alta | 🟢 |
 | UI-03 | Interface | Alternar Kanban/Reuniões/Grafo/Chat | Alta | 🟢 |
 | SET-01 | Interface | Configurações centralizadas | Alta | 🟢 (motor, modelo, idioma, pasta de saída) |
+| SET-02 | Interface | Ligar/desligar cada etapa depois da transcrição | Alta | 🟡 implementado (tarefas no Kanban, documento em PDF); falta verificar no app com reunião real |
+| SET-03 | Interface | Ver e editar o prompt de cada etapa | Alta | 🟡 implementado (modal em Configurações; edição vale por cima do padrão, com restaurar); falta verificar no app |
+| SET-04 | Interface | Atualizar o app pelo próprio app | Alta | 🟡 implementado (Sobre → verificar, lista dos commits, atualizar, reiniciar; recusa árvore suja e histórico divergente); falta verificar contra o remoto |
+| UI-04 | Interface | Minimizar a tela de processamento e seguir usando o app | Alta | 🟡 implementado (chip na barra lateral com progresso; Esc minimiza); falta verificar no app |
 
 ## Milestones
 

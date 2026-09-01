@@ -845,6 +845,77 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 
 .about { margin: 0; color: var(--muted); font-size: 13px; }
 
+.set-lead { margin: 0 0 4px; font-size: 12px; line-height: 1.5; color: var(--muted-dim); }
+.set-btns { display: flex; gap: 6px; flex: none; }
+
+/* Atualização: o que vem, e o que o app está fazendo enquanto atualiza. */
+#upd-version { direction: ltr; }
+#upd-status:empty { display: none; }
+.upd-changes {
+  margin: 4px 0 0;
+  padding: 10px 12px 10px 26px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.upd-changes li::marker { color: var(--cyan); }
+.upd-changes[hidden] { display: none; }
+.upd-log {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  max-height: 140px;
+  overflow-y: auto;
+  background: var(--bg-deep);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.upd-log[hidden] { display: none; }
+.btn.is-busy { opacity: 0.6; pointer-events: none; }
+.set-toggle { cursor: pointer; }
+.set-toggle:hover .set-info strong { color: var(--cyan); }
+
+/* Interruptor: a luz acesa é a etapa ligada. */
+.switch {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  background: var(--bg-deep);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 160ms var(--ease), border-color 160ms var(--ease), box-shadow 160ms var(--ease);
+}
+.switch::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--muted-dim);
+  transition: transform 180ms var(--ease), background 160ms var(--ease);
+}
+.switch:hover { border-color: var(--muted); }
+.switch:checked {
+  background: var(--cyan-dim);
+  border-color: var(--cyan);
+  box-shadow: var(--glow);
+}
+.switch:checked::before { background: var(--cyan); transform: translateX(16px); }
+.switch:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
 /* ===== Drawer ===== */
 
 .scrim, .modal-scrim {
@@ -942,6 +1013,32 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 .file-row:hover { color: var(--cyan); border-color: var(--line); }
 .file-row .ext { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-dim); }
 
+/* As tarefas que nasceram da reunião: a mesma lista do documento, cada uma
+   abrindo o card do Kanban. */
+.drawer-tasks { display: flex; flex-direction: column; gap: 4px; }
+
+.task-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-deep);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--body);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: color 140ms var(--ease), border-color 140ms var(--ease);
+}
+.task-row:hover { color: var(--cyan); border-color: var(--line); }
+.task-row:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
+.task-row .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-row.is-done .title { color: var(--muted-dim); text-decoration: line-through; }
+.task-row .who { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
 .drawer-sub {
   margin: 6px 0 0;
   font-family: var(--mono);
@@ -1007,6 +1104,26 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
   animation: pop 240ms var(--ease) both;
 }
 .modal[hidden] { display: none; }
+.modal-wide { width: min(800px, 94vw); }
+
+/* Editor de prompt: monoespaçado, alto, e a lista de placeholders logo abaixo
+   para a pessoa saber o que não pode tirar. */
+.prompt-editor {
+  min-height: 52vh;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+.prompt-help { margin: -4px 0 8px; font-size: 12px; line-height: 1.6; color: var(--muted-dim); }
+.prompt-help code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--cyan);
+  background: var(--bg-deep);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
 
 @keyframes pop {
   from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
@@ -1121,6 +1238,105 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 }
 
 .overlay-actions { display: flex; gap: 10px; margin-top: 8px; }
+
+/* ===== Chip do trabalho em andamento ===== */
+
+/* A tela de processamento minimizada vira este chip no pé da barra lateral:
+   etapa, nome e percentual, com uma linha de progresso embaixo. É o único
+   lugar do app que pulsa — o olho sabe que algo segue acontecendo. */
+.jobchip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.jobchip[hidden] { display: none; }
+
+.jobchip-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 8px;
+  padding: 9px 10px 8px;
+  background: var(--bg-raised);
+  border: 1px solid var(--cyan-dim);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--body);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--glow);
+  transition: border-color 140ms var(--ease), background 140ms var(--ease);
+}
+.jobchip-main:hover { border-color: var(--cyan); background: var(--bg-hover); }
+.jobchip-main.is-nudged { animation: jobchip-nudge 900ms var(--ease); }
+
+@keyframes jobchip-nudge {
+  0%, 100% { border-color: var(--cyan-dim); box-shadow: var(--glow); }
+  30%      { border-color: var(--cyan); box-shadow: 0 0 0 4px rgba(83, 213, 253, 0.28), var(--glow); }
+}
+.jobchip-main:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+.jobchip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+  animation: jobchip-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes jobchip-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.75); }
+}
+
+.jobchip-text { display: flex; flex-direction: column; min-width: 0; }
+.jobchip-stage { font-size: 12px; font-weight: 600; line-height: 1.3; }
+.jobchip-name {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jobchip-name:empty { display: none; }
+
+.jobchip-pct {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--cyan);
+  font-variant-numeric: tabular-nums;
+}
+
+.jobchip-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  margin-top: 4px;
+  border-radius: 2px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+.jobchip-fill {
+  display: block;
+  height: 100%;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, var(--cyan), var(--violet));
+  transition: transform 320ms var(--ease);
+}
+
+.jobchip-cancel { flex: none; width: 26px; height: 26px; font-size: 11px; }
+.jobchip-cancel:hover { color: var(--red); border-color: var(--red); }
+
+@media (prefers-reduced-motion: reduce) {
+  .jobchip-dot { animation: none; }
+  .jobchip-fill { transition: none; }
+  .jobchip-main.is-nudged { animation: none; border-color: var(--cyan); }
+}
 
 /* ===== Toast ===== */
 

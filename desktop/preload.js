@@ -18,6 +18,7 @@ const listeners = {
   'build:log': new Set(),
   'doc:progress': new Set(),
   'doc:done': new Set(),
+  'update:log': new Set(),
 };
 
 for (const channel of Object.keys(listeners)) {
@@ -54,6 +55,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // --- Tarefas (Kanban) ---
   listTasks: (projectId) => ipcRenderer.invoke('tasks:list', projectId),
+  tasksForMeeting: (meetingId) => ipcRenderer.invoke('tasks:forMeeting', meetingId),
   saveTask: (task) => ipcRenderer.invoke('tasks:save', task),
   moveTask: (id, status) => ipcRenderer.invoke('tasks:move', { id, status }),
   deleteTask: (id) => ipcRenderer.invoke('tasks:delete', id),
@@ -67,6 +69,18 @@ contextBridge.exposeInMainWorld('api', {
   // --- Documentos gerados a partir da transcrição ---
   generateDoc: (payload) => ipcRenderer.invoke('doc:generate', payload),
   cancelDoc: () => ipcRenderer.invoke('doc:cancel'),
+
+  // --- Prompts editáveis (Configurações) ---
+  listPrompts: () => ipcRenderer.invoke('prompt:list'),
+  getPrompt: (kind) => ipcRenderer.invoke('prompt:get', kind),
+  savePrompt: (kind, text) => ipcRenderer.invoke('prompt:save', { kind, text }),
+  resetPrompt: (kind) => ipcRenderer.invoke('prompt:reset', kind),
+
+  // --- Atualização do app ---
+  updateVersion: () => ipcRenderer.invoke('update:version'),
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateApply: () => ipcRenderer.invoke('update:apply'),
+  updateRestart: () => ipcRenderer.invoke('update:restart'),
 
   // --- Chat por projeto ---
   chatAsk: (payload) => ipcRenderer.invoke('chat:ask', payload),

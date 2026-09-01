@@ -1,24 +1,23 @@
 'use strict';
 
 /**
- * Geração dos documentos derivados da reunião (tarefas e resumo executivo)
- * pelo Claude Code em modo headless (`claude -p`).
+ * A chamada ao Claude Code em modo headless (`claude -p`).
  *
- * Os prompts ficam em `prompts/*.md`, fora do código, para poderem ser
- * ajustados sem mexer no app. O Claude lê a transcrição, monta um HTML e o
- * converte em PDF pelo navegador.
+ * O Claude faz uma coisa só: lê a transcrição e devolve a análise da reunião
+ * em JSON (`prompts/analise.md`). Cards do Kanban e documento em PDF saem
+ * dessa análise, montados pelo app — o modelo não escreve HTML nem imprime.
+ *
+ * Os prompts ficam em `prompts/*.md`, fora do código, e a pessoa pode
+ * editá-los em Configurações (`prompts-store.js`).
  */
 
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { readPrompt } = require('./prompts-store');
 
-const KINDS = {
-  tarefas: { prompt: 'tarefas.md', suffix: 'Tarefas' },
-  // "Resumo" e não "Resumo executivo": o registro do documento vem do contexto
-  // do projeto, não de um formato fixo.
-  resumo: { prompt: 'resumo.md', suffix: 'Resumo' },
-};
+// Sufixo do PDF da reunião: "<nome> - Documento.pdf".
+const DOCUMENT_SUFFIX = 'Documento';
 
 // Navegadores capazes de imprimir HTML em PDF, na ordem de preferência.
 const BROWSERS = [
@@ -79,54 +78,34 @@ function contextBlock(context) {
   ].join('\n');
 }
 
-/** Monta o prompt final a partir do template, com caminhos absolutos. */
-function buildPrompt(kind, { transcriptPath, pdfPath, browser, context = '' }) {
-  const config = KINDS[kind];
-  if (!config) throw new Error(`Tipo de documento desconhecido: ${kind}`);
-
-  const template = fs.readFileSync(
-    path.join(__dirname, 'prompts', config.prompt),
-    'utf-8',
-  );
-  const htmlTmp = path.join(
-    os.tmpdir(),
-    `mp-${kind}-${path.basename(pdfPath, '.pdf')}.html`,
-  );
-
-  return template
-    .replaceAll('{{TRANSCRICAO}}', transcriptPath)
-    .replaceAll('{{PDF}}', pdfPath)
-    .replaceAll('{{HTML_TMP}}', htmlTmp)
-    .replaceAll('{{EDGE}}', browser)
-    .replaceAll('{{CONTEXTO}}', contextBlock(context));
-}
-
 /**
- * Prompt da extração estruturada (AI-02): o Claude lê a transcrição e grava um
- * JSON com as ações combinadas. Sai dados, não documento — o PDF continua
- * sendo uma visualização gerada à parte.
+ * Prompt da análise: o Claude lê a transcrição e grava um JSON com título,
+ * resumo, decisões e as ações combinadas. Sai dado, não documento.
+ *
+ * `userPromptsDir` é onde ficam os prompts editados em Configurações; quando
+ * há um lá, é ele que vale.
  */
-function buildExtractionPrompt({ transcriptPath, jsonPath, context = '' }) {
-  const template = fs.readFileSync(path.join(__dirname, 'prompts', 'extrair.md'), 'utf-8');
+function buildAnalysisPrompt({ transcriptPath, jsonPath, context = '', userPromptsDir }) {
+  const template = readPrompt('analise', { userDir: userPromptsDir }).text;
   return template
     .replaceAll('{{TRANSCRICAO}}', transcriptPath)
     .replaceAll('{{JSON}}', jsonPath)
     .replaceAll('{{CONTEXTO}}', contextBlock(context));
 }
 
-/** Onde o JSON temporário da extração é gravado. */
-function extractionPathFor(transcriptPath) {
+/** Onde o JSON que o Claude escreve é gravado antes de o app normalizá-lo. */
+function analysisTmpPathFor(transcriptPath) {
   return path.join(
     os.tmpdir(),
-    `synapse-extracao-${path.basename(transcriptPath, path.extname(transcriptPath))}.json`,
+    `synapse-analise-${path.basename(transcriptPath, path.extname(transcriptPath))}.json`,
   );
 }
 
-/** Caminho do PDF gerado para uma transcrição. */
-function pdfPathFor(kind, transcriptPath) {
+/** Caminho do PDF da reunião, ao lado da transcrição. */
+function documentPdfPath(transcriptPath) {
   const dir = path.dirname(transcriptPath);
   const stem = path.basename(transcriptPath, path.extname(transcriptPath));
-  return path.join(dir, `${stem} - ${KINDS[kind].suffix}.pdf`);
+  return path.join(dir, `${stem} - ${DOCUMENT_SUFFIX}.pdf`);
 }
 
 /**
@@ -159,27 +138,26 @@ function describeEvent(event) {
     for (const block of blocks) {
       if (block.type === 'tool_use') {
         if (block.name === 'Read') return 'lendo a transcrição';
-        if (block.name === 'Write') return 'escrevendo o documento';
-        if (block.name === 'Bash') return 'convertendo para PDF';
+        if (block.name === 'Write') return 'escrevendo a análise';
+        if (block.name === 'Bash') return 'executando um comando';
         return `usando ${block.name}`;
       }
       if (block.type === 'text' && block.text.trim()) return 'analisando a reunião';
     }
   }
   if (event.type === 'result') {
-    return event.is_error ? 'erro ao gerar o documento' : 'documento pronto';
+    return event.is_error ? 'erro na análise' : 'análise pronta';
   }
   return null;
 }
 
 module.exports = {
-  KINDS,
-  findClaude,
+  DOCUMENT_SUFFIX,
+  analysisTmpPathFor,
+  buildAnalysisPrompt,
   buildClaudeArgs,
-  buildExtractionPrompt,
-  buildPrompt,
   describeEvent,
-  extractionPathFor,
+  documentPdfPath,
   findBrowser,
-  pdfPathFor,
+  findClaude,
 };

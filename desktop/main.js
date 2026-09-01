@@ -24,15 +24,16 @@ const {
   toHostPath,
 } = require('./engines');
 const {
+  analysisTmpPathFor,
+  buildAnalysisPrompt,
   buildClaudeArgs,
-  buildExtractionPrompt,
-  buildPrompt,
   describeEvent,
-  extractionPathFor,
+  documentPdfPath,
   findBrowser,
   findClaude,
-  pdfPathFor,
 } = require('./claude-jobs');
+const { analysisPath, normalizeAnalysis, readAnalysis, writeAnalysis } = require('./analysis');
+const { renderDocumentHtml } = require('./document-html');
 const library = require('./library');
 const db = require('./db');
 const projects = require('./projects');
@@ -40,6 +41,11 @@ const tasks = require('./tasks');
 const workspace = require('./workspace');
 const transcriptImport = require('./transcript-import');
 const { readFileTolerant, unlinkTolerant } = require('./unicode-path');
+const promptsStore = require('./prompts-store');
+const { createUpdater } = require('./updater');
+const {
+  DEFAULT_STEPS, DOC_KINDS, normalizeSteps, pendingDocKinds, planAfterTranscription,
+} = require('./pipeline-steps');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 
@@ -56,12 +62,14 @@ const DEFAULT_SETTINGS = {
   nativeModel: '',     // caminho do .bin escolhido no motor nativo
   language: 'pt',
   formats: ['md', 'txt'],
+  // O que roda depois da transcrição; cada etapa liga e desliga sozinha.
+  steps: { ...DEFAULT_STEPS },
 };
 
 let mainWindow = null;
 let currentJob = null;    // transcrição em andamento
 let currentDocJob = null; // geração de PDF em andamento
-let currentExtraction = null; // extração de tarefas em andamento
+let currentExtraction = null; // análise da reunião em andamento (fim do pipeline)
 
 // --- Configurações persistidas ---------------------------------------------
 
@@ -69,10 +77,18 @@ function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
+// Prompts editados em Configurações. O padrão fica no app; o que a pessoa
+// mudou fica aqui e vale por cima.
+function userPromptsDir() {
+  return path.join(app.getPath('userData'), 'prompts');
+}
+
 function loadSettings() {
   try {
     const raw = fs.readFileSync(settingsPath(), 'utf-8');
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    const saved = JSON.parse(raw);
+    // Uma etapa nova entra ligada mesmo em configurações gravadas antes dela.
+    return { ...DEFAULT_SETTINGS, ...saved, steps: normalizeSteps(saved.steps) };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -88,9 +104,9 @@ function saveSettings(patch) {
 // --- Helpers de processo ----------------------------------------------------
 
 /** Roda um comando e resolve com { code, stdout, stderr }. Nunca rejeita. */
-function run(command, args) {
+function run(command, args, { cwd } = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { windowsHide: true });
+    const child = spawn(command, args, { windowsHide: true, cwd });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (d) => { stdout += d.toString(); });
@@ -338,24 +354,10 @@ function startJob(payload) {
 }
 
 /**
- * Gravação feita dentro do app (REC-04): o áudio capturado na janela chega
- * como bytes, vira um arquivo e entra no mesmo pipeline da importação. A
- * origem muda; o processamento é o de sempre.
- */
-/**
- * Extração estruturada (AI-02): logo depois da transcrição, o Claude lê o
- * texto e devolve as ações combinadas em JSON, que viram cards no kanban do
- * projeto. É o que faz a reunião terminar sem trabalho manual.
- *
- * Falha aqui não derruba o job: a transcrição já está no disco, e uma extração
- * que não veio é um kanban vazio, não uma reunião perdida.
- */
-/**
  * Importa uma transcrição já pronta (texto ou legenda).
  *
  * Não há áudio para extrair nem nada para transcrever: o arquivo vira reunião
- * direto e, havendo projeto, segue para a extração de tarefas como qualquer
- * outra. Os eventos são os mesmos do pipeline para a janela não precisar de um
+ * direto e segue para a análise como qualquer outra. Os eventos são os mesmos do pipeline para a janela não precisar de um
  * segundo caminho de progresso.
  */
 async function importTranscriptJob({ filePath, name, projectId, autoName = false }) {
@@ -395,10 +397,6 @@ async function importTranscriptJob({ filePath, name, projectId, autoName = false
 }
 
 /**
- * Fecha o ciclo da reunião: com projeto, as ações viram cards antes do aviso de
- * pronto; sem projeto, não há onde pendurar tarefa e o aviso sai na hora.
- */
-/**
  * Renomeia a reunião e leva junto os vínculos.
  *
  * O id é o nome da pasta: renomear muda o id, e projeto e tarefas precisam
@@ -415,22 +413,42 @@ function renameMeetingEverywhere(dir, id, novoNome) {
 
 async function finishJob(event, outputDir, projectId, autoName = false) {
   const transcricao = event.files.find((f) => f.toLowerCase().endsWith('.md'));
+  const plan = planAfterTranscription({
+    steps: loadSettings().steps,
+    projectId,
+    autoName,
+    hasTranscript: Boolean(transcricao),
+  });
 
-  // A leitura da transcrição serve às duas coisas: as ações combinadas e, se
-  // foi pedido, o nome da reunião. Uma passada só do modelo.
-  if (transcricao && (projectId || autoName)) {
-    send('job:event', { event: 'stage', key: 'extract', progress: 20, detail: 'lendo a transcrição' });
-    const { created, title, message } = await extractTasks({
-      meetingId: event.meetingId,
-      projectId,
+  event.tasksCreated = 0;
+  if (plan.analyze) {
+    // Uma leitura só do modelo: dela saem o título, os cards e o documento.
+    const meeting = library.getMeeting(outputDir, event.meetingId);
+    const { analysis, message } = await analyzeMeeting({
       transcriptPath: transcricao,
       context: projectId ? projects.getProject(outputDir, projectId)?.context || '' : '',
+      savePath: meeting ? analysisPath(meeting.dir, meeting.legacy) : null,
+      register: (child) => { currentExtraction = child; },
+      onProgress: ({ progress, detail }) =>
+        send('job:event', { event: 'stage', key: 'analyze', progress, detail }),
     });
-    event.tasksCreated = created;
-    if (message) send('job:log', `Extração: ${message}`);
+    currentExtraction = null;
+    if (message) send('job:log', `Análise: ${message}`);
 
-    if (autoName && title) {
-      const renomeada = renameMeetingEverywhere(outputDir, event.meetingId, title);
+    if (analysis && plan.saveTasks) {
+      const { created } = tasks.createFromExtraction(outputDir, {
+        projectId, meetingId: event.meetingId, items: analysis.tasks,
+      });
+      event.tasksCreated = created;
+      // Analisou tarefas mas nenhuma entrou no Kanban: sem isto o silêncio se
+      // parece com "a reunião não gerou tarefas", e o trabalho se perde.
+      if (analysis.tasks.length && !created) {
+        send('job:log', `Análise: ${analysis.tasks.length} tarefa(s) não puderam ser gravadas no Kanban.`);
+      }
+    }
+
+    if (autoName && analysis?.title) {
+      const renomeada = renameMeetingEverywhere(outputDir, event.meetingId, analysis.title);
       if (renomeada.ok && renomeada.id) {
         event.meetingId = renomeada.id;
         event.renamedTo = renomeada.id;
@@ -441,91 +459,101 @@ async function finishJob(event, outputDir, projectId, autoName = false) {
         send('job:log', `Nome sugerido não pôde ser aplicado: ${renomeada.message}`);
       }
     }
-  } else {
-    event.tasksCreated = 0;
   }
 
+  // A janela precisa saber se ainda vem documento: com a lista vazia, a
+  // reunião está pronta aqui mesmo.
+  event.docs = event.meetingId ? plan.docs : [];
   send('job:event', event);
 
-  // Resumo e tarefas em PDF saem sozinhos. Fora do caminho do aviso de pronto:
-  // a transcrição já está na tela enquanto o Claude escreve os documentos.
-  if (event.meetingId) enqueueDocs(event.meetingId);
+  // O documento ligado em Configurações sai sozinho. Fora do caminho do aviso
+  // de pronto: a transcrição já está na tela enquanto o PDF é montado.
+  if (event.docs.length) enqueueDocs(event.meetingId, event.docs);
 }
 
-function extractTasks({ meetingId, projectId, transcriptPath, context }) {
+/**
+ * A análise da reunião (AI-01): o Claude lê a transcrição e grava um JSON com
+ * título, visão geral, decisões e as ações combinadas. É a única chamada ao
+ * modelo por reunião — Kanban e documento nascem do que sai daqui.
+ *
+ * Falha aqui não derruba o job: a transcrição já está no disco, e uma análise
+ * que não veio é um kanban vazio e um PDF que não saiu, não uma reunião perdida.
+ *
+ * `register` recebe o processo para quem precisar cancelá-lo; `onProgress`
+ * recebe { progress, detail } para a barra que estiver na tela.
+ */
+function analyzeMeeting({ transcriptPath, context, savePath, register = () => {}, onProgress = () => {} }) {
   return new Promise((resolve) => {
-    const jsonPath = extractionPathFor(transcriptPath);
+    const jsonPath = analysisTmpPathFor(transcriptPath);
     unlinkTolerant(jsonPath);   // sobra de uma tentativa anterior
 
     let prompt;
     try {
-      prompt = buildExtractionPrompt({ transcriptPath, jsonPath, context });
+      prompt = buildAnalysisPrompt({ transcriptPath, jsonPath, context, userPromptsDir: userPromptsDir() });
     } catch (err) {
-      resolve({ created: 0, message: err.message });
+      resolve({ analysis: null, message: err.message });
       return;
     }
 
+    onProgress({ progress: 20, detail: 'lendo a transcrição' });
     const child = spawn(findClaude(), buildClaudeArgs(), {
       cwd: path.dirname(transcriptPath),
       windowsHide: true,
     });
+    // O prompt vai por stdin: como argumento, o shell do Windows o corrompe.
     child.stdin.write(prompt);
     child.stdin.end();
+    register(child);
 
-    currentExtraction = child;
     let progresso = 45;
-
     child.stdout.on('data', (chunk) => {
       for (const line of chunk.toString().split('\n')) {
         if (!line.trim().startsWith('{')) continue;
         try {
-          const descricao = describeEvent(JSON.parse(line));
-          if (!descricao) continue;
+          const detail = describeEvent(JSON.parse(line));
+          if (!detail) continue;
           progresso = Math.min(90, progresso + 8);
-          send('job:event', { event: 'stage', key: 'extract', progress: progresso, detail: descricao });
+          onProgress({ progress: progresso, detail });
         } catch { /* linha parcial do stream */ }
       }
     });
 
     child.on('error', (err) => resolve({
-      created: 0,
+      analysis: null,
       message: `não foi possível executar o Claude Code (${err.code || err.message}).`,
     }));
 
     child.on('close', () => {
-      currentExtraction = null;
-      let dados = null;
+      let dados;
       try {
         // Tolerante à normalização do Unicode: o Claude grava o nome em NFC
         // mesmo quando recebeu o caminho em NFD, e aí o arquivo "desaparece"
         // para quem procura exatamente a forma que enviou.
         dados = JSON.parse(readFileTolerant(jsonPath));
       } catch (err) {
-        resolve({ created: 0, message: `a extração não devolveu um JSON legível (${err.message}).` });
+        resolve({ analysis: null, message: `a análise não devolveu um JSON legível (${err.message}).` });
         return;
       }
       unlinkTolerant(jsonPath);
 
-      const items = Array.isArray(dados.tasks) ? dados.tasks : [];
-      const { created } = tasks.createFromExtraction(loadSettings().outputDir, {
-        projectId,
-        meetingId,
-        items,
-      });
-      // Extraiu ações mas nenhuma entrou no Kanban: sem isto o silêncio se
-      // parece com "a reunião não gerou tarefas", e o trabalho se perde.
-      const message = items.length && !created
-        ? `${items.length} ação(ões) extraída(s) não puderam ser gravadas no Kanban.`
-        : '';
-      resolve({
-        created,
-        message,
-        title: typeof dados.title === 'string' ? dados.title.trim() : '',
-      });
+      const analysis = normalizeAnalysis(dados);
+      if (savePath) {
+        try {
+          writeAnalysis(savePath, analysis);
+        } catch (err) {
+          send('job:log', `Não deu para guardar a análise: ${err.message}`);
+        }
+      }
+      resolve({ analysis, message: '' });
     });
   });
 }
 
+/**
+ * Gravação feita dentro do app (REC-04): o áudio capturado na janela chega
+ * como bytes, vira um arquivo e entra no mesmo pipeline da importação. A
+ * origem muda; o processamento é o de sempre.
+ */
 function startRecordingJob({ projectId, name, audio, mimeType = 'audio/webm' }) {
   if (currentJob) {
     return { started: false, message: 'Já existe uma transcrição em andamento.' };
@@ -579,115 +607,67 @@ async function cancelJob() {
   return { canceled: true };
 }
 
-// --- Documentos gerados pelo Claude ----------------------------------------
+// --- Documento da reunião ----------------------------------------------------
 
 /**
- * Gera um documento (resumo ou tarefas) a partir da transcrição.
- *
- * Resolve quando o PDF existe no disco — o veredito é o arquivo, não o que o
- * modelo disse ter feito.
+ * Imprime o HTML em PDF pelo navegador. O veredito é o arquivo no disco: um
+ * código de saída zero com PDF vazio não conta.
  */
-function runDocJob({ kind, transcriptPath, context = '' }) {
-  return new Promise((resolve) => {
-    const browser = findBrowser();
-    if (!browser) {
-      resolve({ kind, ok: false, message: 'Nenhum navegador encontrado para gerar o PDF (Edge ou Chrome).' });
-      return;
-    }
-
-    const pdfPath = pdfPathFor(kind, transcriptPath);
-    let prompt;
-    try {
-      prompt = buildPrompt(kind, { transcriptPath, pdfPath, browser, context });
-    } catch (err) {
-      resolve({ kind, ok: false, message: err.message });
-      return;
-    }
-
-    const child = spawn(findClaude(), buildClaudeArgs(), {
-      cwd: path.dirname(transcriptPath),
-      windowsHide: true,
-    });
-    // O prompt vai por stdin: como argumento, o shell do Windows o corrompe.
-    child.stdin.write(prompt);
-    child.stdin.end();
-
-    currentDocJob = { child, kind, pdfPath, canceled: currentDocJob?.canceled || false };
-
-    let buffer = '';
-    let lastMessage = '';
-
-    child.stdout.on('data', (chunk) => {
-      buffer += chunk.toString();
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith('{')) continue;
-        try {
-          const event = JSON.parse(trimmed);
-          const description = describeEvent(event);
-          if (description) send('doc:progress', { kind, description });
-          if (event.type === 'result') lastMessage = event.result || lastMessage;
-        } catch {
-          // Linha fora do formato: ignora em vez de derrubar a geração.
-        }
-      }
-    });
-
-    child.stderr.on('data', (chunk) => {
-      const text = chunk.toString().trim();
-      if (text) lastMessage = text.split('\n').filter(Boolean).pop() || lastMessage;
-    });
-
-    child.on('error', (err) => {
-      resolve({ kind, ok: false, message: `Falha ao executar o Claude: ${err.message}` });
-    });
-
-    child.on('close', () => {
-      const canceled = currentDocJob?.canceled;
-      const ok = !canceled && fs.existsSync(pdfPath) && fs.statSync(pdfPath).size > 0;
-      resolve({
-        kind,
-        ok,
-        canceled,
-        pdfPath: ok ? pdfPath : null,
-        message: ok ? lastMessage : `${canceled ? 'Geração cancelada.' : 'O PDF não foi gerado.'} ${lastMessage}`.trim(),
-      });
-    });
-  });
+async function printToPdf(html, pdfPath) {
+  const browser = findBrowser();
+  if (!browser) {
+    return { ok: false, message: 'Nenhum navegador encontrado para gerar o PDF (Edge ou Chrome).' };
+  }
+  const htmlTmp = path.join(app.getPath('temp'), `synapse-documento-${Date.now()}.html`);
+  fs.writeFileSync(htmlTmp, html, 'utf-8');
+  try {
+    unlinkTolerant(pdfPath);   // um PDF antigo não pode passar por resultado novo
+    const r = await run(browser, [
+      '--headless', '--disable-gpu', '--no-pdf-header-footer',
+      `--print-to-pdf=${pdfPath}`, htmlTmp,
+    ]);
+    const ok = fs.existsSync(pdfPath) && fs.statSync(pdfPath).size > 0;
+    return ok
+      ? { ok: true }
+      : { ok: false, message: `O navegador não gerou o PDF (código ${r.code}). ${r.stderr}`.trim() };
+  } finally {
+    try { fs.unlinkSync(htmlTmp); } catch { /* já removido */ }
+  }
 }
 
-/**
- * Gera os documentos da reunião.
- *
- * Resumo e tarefas saem da mesma leitura e sempre foram pedidos juntos: são um
- * botão só. A ordem importa — o resumo primeiro, porque é o que a pessoa abre
- * enquanto o outro ainda está sendo escrito.
- */
 /**
  * Fila de documentos.
  *
  * A geração acontece sozinha ao fim de cada reunião, e duas importações
  * seguidas chegariam juntas aqui. Em vez de recusar a segunda, ela espera a
- * vez — o Claude só roda um de cada vez.
+ * vez — o Claude, quando precisa entrar, só roda um de cada vez.
  */
 const docQueue = [];
 
-function enqueueDocs(meetingId) {
-  if (docQueue.includes(meetingId)) return { started: true, queued: true };
-  docQueue.push(meetingId);
+function enqueueDocs(meetingId, kinds = DOC_KINDS) {
+  // O que a fila já promete para esta reunião não entra de novo; o que falta
+  // entra como item próprio — descartar o pedido seria dizer "feito" e não fazer.
+  const missing = pendingDocKinds(docQueue, meetingId, kinds);
+  if (!missing.length) return { started: true, queued: true };
+  docQueue.push({ meetingId, kinds: missing });
   if (docQueue.length === 1) runDocQueue();
   return { started: true, queued: docQueue.length > 1 };
 }
 
 async function runDocQueue() {
   while (docQueue.length) {
-    await generateDocs({ meetingId: docQueue[0] });
+    await generateDocs(docQueue[0]);
     docQueue.shift();
   }
 }
 
+/**
+ * O documento da reunião, a partir da análise gravada.
+ *
+ * Reunião de antes da análise existir (ou pedido à mão numa que ficou sem):
+ * o Claude lê agora, e a análise fica guardada para a próxima vez. A tabela
+ * de tarefas do PDF é a mesma lista que virou cards — por construção.
+ */
 async function generateDocs({ meetingId }) {
   const dir = outDir();
   const meeting = library.getMeeting(dir, meetingId);
@@ -695,27 +675,43 @@ async function generateDocs({ meetingId }) {
     return { started: false, message: 'Transcrição não encontrada.' };
   }
 
-  const context = meeting.project?.context || '';
-  currentDocJob = { child: null, kind: 'resumo', canceled: false };
-  send('doc:progress', { kind: 'resumo', description: 'lendo a transcrição' });
+  currentDocJob = { child: null, kind: 'documento', canceled: false };
+  const progress = (description) => send('doc:progress', { kind: 'documento', description });
+  progress('lendo a análise');
 
-  const resultados = [];
-  for (const kind of ['resumo', 'tarefas']) {
-    if (currentDocJob?.canceled) break;
-    resultados.push(await runDocJob({ kind, transcriptPath: meeting.transcript, context }));
+  const savePath = analysisPath(meeting.dir, meeting.legacy);
+  let analysis = readAnalysis(savePath);
+  let message = '';
+  if (!analysis) {
+    const r = await analyzeMeeting({
+      transcriptPath: meeting.transcript,
+      context: meeting.project?.context || '',
+      savePath,
+      register: (child) => { if (currentDocJob) currentDocJob.child = child; },
+      onProgress: ({ detail }) => progress(detail),
+    });
+    analysis = r.analysis;
+    message = r.message;
+  }
+
+  let ok = false;
+  if (analysis && !currentDocJob?.canceled) {
+    progress('montando o documento');
+    const html = renderDocumentHtml({ meeting: workspace.toMeeting(meeting, meeting.project), analysis });
+    progress('convertendo para PDF');
+    const r = await printToPdf(html, documentPdfPath(meeting.transcript));
+    ok = r.ok;
+    if (!ok) message = r.message;
   }
 
   const canceled = Boolean(currentDocJob?.canceled);
   currentDocJob = null;
-  const gerados = resultados.filter((r) => r.ok);
   send('doc:done', {
     meetingId,
-    ok: gerados.length > 0,
+    ok: ok && !canceled,
     canceled,
-    kinds: gerados.map((r) => r.kind),
-    message: gerados.length === resultados.length
-      ? ''
-      : (resultados.find((r) => !r.ok)?.message || ''),
+    kinds: ok && !canceled ? ['documento'] : [],
+    message: ok ? '' : (message || 'O documento não foi gerado.'),
   });
   return { started: true };
 }
@@ -795,6 +791,7 @@ ipcMain.handle('meetings:read', (_e, filePath) => library.readText(filePath));
 
 // Tarefas do Kanban.
 ipcMain.handle('tasks:list', (_e, projectId) => workspace.listTasks(outDir(), projectId));
+ipcMain.handle('tasks:forMeeting', (_e, meetingId) => workspace.listTasksForMeeting(outDir(), meetingId));
 ipcMain.handle('tasks:save', (_e, task) => tasks.saveTask(outDir(), task));
 ipcMain.handle('tasks:move', (_e, { id, status }) => tasks.moveTask(outDir(), id, status));
 ipcMain.handle('tasks:delete', (_e, id) => tasks.deleteTask(outDir(), id));
@@ -808,6 +805,32 @@ ipcMain.handle('transcript:import', (_e, payload) => importTranscriptJob(payload
 // Documentos: o front manda o id da reunião; aqui viram caminho e contexto.
 ipcMain.handle('doc:generate', (_e, { meetingId }) => enqueueDocs(meetingId));
 ipcMain.handle('doc:cancel', () => cancelDocJob());
+
+// Atualização do app: git pull no clone e reinício do Electron.
+const updater = createUpdater({
+  root: PROJECT_ROOT,
+  run,
+  log: (line) => send('update:log', line),
+});
+const isBusy = () => Boolean(currentJob || currentExtraction || currentDocJob);
+ipcMain.handle('update:version', () => updater.currentVersion());
+ipcMain.handle('update:check', () => updater.check());
+ipcMain.handle('update:apply', () => (isBusy()
+  ? { ok: false, message: 'Espere o processamento em andamento terminar antes de atualizar.' }
+  : updater.update()));
+ipcMain.handle('update:restart', () => {
+  // Reabre o mesmo Electron com os mesmos argumentos: o código novo já está
+  // no disco, só falta carregá-lo.
+  app.relaunch();
+  app.exit(0);
+});
+
+// Prompts: ver, editar e restaurar as instruções de cada etapa.
+ipcMain.handle('prompt:list', () => promptsStore.listPrompts());
+ipcMain.handle('prompt:get', (_e, kind) => promptsStore.readPrompt(kind, { userDir: userPromptsDir() }));
+ipcMain.handle('prompt:save', (_e, { kind, text }) =>
+  promptsStore.savePrompt(kind, text, { userDir: userPromptsDir() }));
+ipcMain.handle('prompt:reset', (_e, kind) => promptsStore.resetPrompt(kind, { userDir: userPromptsDir() }));
 
 // Chat por projeto — o RAG entra no M3 (embeddings + Vector DB).
 ipcMain.handle('chat:ask', (_e, { projectId }) => {

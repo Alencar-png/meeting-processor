@@ -14,9 +14,17 @@
 
 1. Você grava pela janela do app, ou solta um vídeo/áudio nela.
 2. O **ffmpeg** extrai o áudio e o **Whisper** transcreve — local, na GPU.
-3. O app lê a transcrição e extrai as **ações combinadas**, que entram como
-   cards no Kanban do projeto.
-4. Resumo e tarefas também saem em PDF, na pasta da reunião.
+3. O Claude lê a transcrição **uma vez** e devolve a análise da reunião:
+   visão geral, decisões, riscos e as **ações combinadas**.
+4. Dessa análise saem, juntos, os cards no Kanban do projeto e um **documento
+   em PDF** na pasta da reunião — a tabela de tarefas do PDF é a mesma lista
+   dos cards.
+
+Cards e documento são opcionais: em **Configurações → Depois da transcrição**
+cada um liga e desliga sozinho, e o prompt da análise pode ser visto e editado
+ali mesmo. Enquanto a reunião processa, a tela de
+trabalho pode ser **minimizada** — o progresso segue num chip na barra lateral
+e o app fica livre para uso.
 
 O centro é o **projeto**: cada um tem seu Kanban, suas reuniões, seus
 documentos e um texto de contexto que orienta o tom do que é gerado.
@@ -82,6 +90,10 @@ Pela linha de comando:
 ```bash
 cd desktop && npm install && npm start
 ```
+
+Para atualizar depois, não precisa voltar ao terminal: **Configurações →
+Sobre → Verificar atualização** mostra o que mudou e o botão **Atualizar agora**
+faz o `git pull`, reinstala dependências se elas mudaram e reabre o app.
 
 ---
 
@@ -156,7 +168,12 @@ desktop/                   # app Electron (Synapse) — veja desktop/README.md
 ├── main.js                # processo principal: jobs, extração, documentos
 ├── library.js             # reuniões na pasta de saída
 ├── projects.js tasks.js   # projetos e Kanban (SQLite)
-├── claude-jobs.js         # chamadas ao Claude Code
+├── claude-jobs.js         # a chamada ao Claude Code (análise da reunião)
+├── analysis.js            # a análise: JSON normalizado em analise.json, por reunião
+├── document-html.js       # o PDF da reunião montado a partir da análise
+├── pipeline-steps.js      # quais etapas rodam depois da transcrição
+├── prompts-store.js       # prompts editados em Configurações, por cima do padrão
+├── updater.js             # atualização pelo app: git pull + reinstalar o que mudou
 ├── unicode-path.js        # caminhos com acento nas duas formas do Unicode
 ├── prompts/               # prompts de extração e documentos, fora do código
 └── renderer/              # interface

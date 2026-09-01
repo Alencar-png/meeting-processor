@@ -137,7 +137,7 @@ function meetingTile(m, { showProject = false } = {}) {
   const badges = document.createElement('div');
   badges.className = 'tile-badges';
   if (showProject && m.project) badges.append(pill(m.project.name, 'mint'));
-  badges.append(pill('resumo', m.hasResumo ? 'on' : ''), pill('tarefas', m.hasTarefas ? 'violet' : ''));
+  badges.append(pill('documento', m.hasDocumento ? 'on' : ''));
   tile.append(main, badges);
   tile.addEventListener('click', () => openDrawer(m.id));
   return tile;
@@ -790,8 +790,7 @@ async function renderLibrary() {
   const rows = meetings
     .filter((m) => ({
       todas: true,
-      'com-tarefas': m.hasTarefas, 'sem-tarefas': !m.hasTarefas,
-      'com-resumo': m.hasResumo, 'sem-resumo': !m.hasResumo,
+      'com-documento': m.hasDocumento, 'sem-documento': !m.hasDocumento,
     }[libView.filter]))
     .filter((m) => !libView.group || m.projectId === libView.group)
     .filter((m) => !termo || m.name.toLowerCase().includes(termo)
@@ -819,6 +818,11 @@ async function checkEngine() {
 function renderSettings() {
   $('set-outdir').textContent = settings.outputDir;
   $('set-language').value = settings.language;
+  for (const input of $('set-steps').querySelectorAll('input[data-step]')) {
+    input.checked = settings.steps?.[input.dataset.step] !== false;
+  }
+  renderPromptChoices();
+  renderUpdateVersion();
   const isNative = engines.active === 'native';
   for (const b of $('set-engine').children) {
     b.classList.toggle('is-active', b.dataset.engine === engines.active);
@@ -853,6 +857,84 @@ $('set-model').addEventListener('change', async () => {
 
 $('set-language').addEventListener('change', async () => {
   settings = await window.api.setSettings({ language: $('set-language').value });
+});
+
+$('set-steps').addEventListener('change', async (e) => {
+  const input = e.target.closest('input[data-step]');
+  if (!input) return;
+  settings = await window.api.setSettings({
+    steps: { ...settings.steps, [input.dataset.step]: input.checked },
+  });
+});
+
+// --- Atualização do app -----------------------------------------------------------------
+
+/**
+ * O Synapse roda de um clone git: atualizar é trazer os commits novos e
+ * reabrir. A verificação só acontece ao clicar — é a única coisa em
+ * Configurações que fala com a rede.
+ */
+async function renderUpdateVersion() {
+  const v = await window.api.updateVersion();
+  $('upd-version').textContent = v.ok
+    ? `${v.commit} · ${fmtDate(new Date(v.date).getTime())}/${new Date(v.date).getFullYear()} · ${v.branch}`
+    : 'não é um clone git';
+  if (!v.ok) {
+    $('upd-status').textContent = v.message;
+    $('upd-check').hidden = true;
+  }
+}
+
+function setUpdateButtons({ check = true, apply = false, restart = false }) {
+  $('upd-check').hidden = !check;
+  $('upd-apply').hidden = !apply;
+  $('upd-restart').hidden = !restart;
+}
+
+$('upd-check').addEventListener('click', async () => {
+  const b = $('upd-check');
+  b.classList.add('is-busy');
+  $('upd-status').textContent = 'Consultando o repositório…';
+  $('upd-changes').hidden = true;
+  const r = await window.api.updateCheck();
+  b.classList.remove('is-busy');
+  $('upd-status').textContent = r.message;
+  const lista = $('upd-changes');
+  lista.replaceChildren(...(r.changes || []).map((texto) => {
+    const li = document.createElement('li');
+    li.textContent = texto;
+    return li;
+  }));
+  lista.hidden = !(r.changes || []).length;
+  setUpdateButtons({ check: true, apply: r.ok && r.behind > 0 && !r.dirty });
+});
+
+$('upd-apply').addEventListener('click', async () => {
+  if (busyWarning()) return;
+  const b = $('upd-apply');
+  b.classList.add('is-busy');
+  const log = $('upd-log');
+  log.textContent = '';
+  log.hidden = false;
+  $('upd-status').textContent = 'Atualizando…';
+  const r = await window.api.updateApply();
+  b.classList.remove('is-busy');
+  $('upd-status').textContent = r.message;
+  if (r.ok && r.updated) {
+    setUpdateButtons({ check: false, apply: false, restart: true });
+    $('upd-changes').hidden = true;
+  } else {
+    setUpdateButtons({ check: true, apply: false });
+  }
+});
+
+$('upd-restart').addEventListener('click', () => window.api.updateRestart());
+
+window.api.on('update:log', (line) => {
+  const log = $('upd-log');
+  log.hidden = false;
+  log.textContent += `${line}\n`;
+  log.scrollTop = log.scrollHeight;
 });
 
 $('set-pick-outdir').addEventListener('click', async () => {
@@ -913,12 +995,54 @@ async function openDrawer(meetingId) {
   }
   if (!(m.files || []).length) files.append(emptyNote('Nenhum arquivo nesta reunião.'));
 
-  // O botão só aparece quando a geração automática não deixou os dois PDFs.
-  $('drawer-docs').hidden = m.hasResumo && m.hasTarefas;
+  await renderDrawerTasks(m.id);
+
+  // O botão só aparece quando a reunião ainda não tem o documento — e quando
+  // nada mais está rodando: a tela de trabalho mostra um job só.
+  $('drawer-docs').hidden = m.hasDocumento || proc.active;
 
   renderReader(drawerTranscript, '');
   $('drawer').hidden = false;
   $('drawer-scrim').hidden = false;
+}
+
+const TASK_STATUS_LABEL = { backlog: 'backlog', doing: 'em andamento', done: 'concluído' };
+const TASK_STATUS_PILL = { backlog: '', doing: 'on', done: 'mint' };
+
+/**
+ * As tarefas que nasceram desta reunião — a mesma lista que está no documento.
+ * Clicar abre o card, como no Kanban; o vínculo passa a ser visível dos dois lados.
+ */
+async function renderDrawerTasks(meetingId) {
+  const box = $('drawer-tasks');
+  const tarefas = await window.api.tasksForMeeting(meetingId);
+  box.replaceChildren();
+  if (!tarefas.length) {
+    box.append(emptyNote('Nenhuma tarefa veio desta reunião.'));
+    return;
+  }
+  for (const t of tarefas) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `task-row${t.status === 'done' ? ' is-done' : ''}`;
+    b.title = 'Abrir a tarefa';
+    const prio = document.createElement('span');
+    prio.className = `prio prio-${t.priority}`;
+    prio.title = `prioridade ${PRIO_LABEL[t.priority]}`;
+    const title = document.createElement('span');
+    title.className = 'title';
+    title.textContent = t.title;
+    b.append(prio, title);
+    if (t.assignee) {
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = t.assignee;
+      b.append(who);
+    }
+    b.append(pill(TASK_STATUS_LABEL[t.status] || t.status, TASK_STATUS_PILL[t.status] || ''));
+    b.addEventListener('click', () => openTaskModal(t));
+    box.append(b);
+  }
 }
 
 function closeDrawer() {
@@ -1020,13 +1144,15 @@ $('drawer-delete').addEventListener('click', async () => {
 });
 
 $('drawer-docs').addEventListener('click', async () => {
+  if (busyWarning()) return;
   const alvo = drawerMeetingId;
+  const nome = $('drawer-name').textContent;
   closeDrawer();
-  enterDocPhase(alvo);
+  // Pedido à mão gera o documento, ligado ou não em Configurações.
+  enterDocPhase(alvo, DOC_KINDS_ALL, { name: nome });
   const r = await window.api.generateDoc({ meetingId: alvo });
   if (r && r.started === false) {
-    docPhase = false;
-    $('overlay-process').hidden = true;
+    stopProcessing();
     toast(r.message);
   }
 });
@@ -1072,7 +1198,7 @@ $('md-cancel').addEventListener('click', () => closeDanger(false));
 
 function closeModals() {
   $('modal-scrim').hidden = true;
-  for (const id of ['modal-project', 'modal-task', 'modal-confirm']) $(id).hidden = true;
+  for (const id of ['modal-project', 'modal-task', 'modal-confirm', 'modal-prompt']) $(id).hidden = true;
 }
 $('modal-scrim').addEventListener('click', closeModals);
 window.addEventListener('keydown', (e) => {
@@ -1144,7 +1270,9 @@ $('mt-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const r = await window.api.saveTask({
     id: editingTaskId,
-    projectId: currentProjectId,
+    // Editando, a tarefa fica no projeto dela: o card pode ter sido aberto
+    // pelo painel de uma reunião, fora da tela do projeto.
+    projectId: editingTaskId ? undefined : currentProjectId,
     title: $('mt-name').value,
     description: $('mt-desc').value,
     assignee: $('mt-assignee').value,
@@ -1153,12 +1281,20 @@ $('mt-form').addEventListener('submit', async (e) => {
   });
   if (!r.ok) { $('mt-error').textContent = r.message; return; }
   closeModals();
+  await refreshAfterTaskChange();
+});
+
+/** O card mudou: o projeto, a barra lateral e o painel da reunião acompanham. */
+async function refreshAfterTaskChange() {
   await refreshProjects();
   renderSidebar();
-  if (currentTab === 'kanban') renderKanban();
-  if (currentTab === 'overview') renderOverview();
-  if (currentTab === 'graph') renderGraph();
-});
+  if (view === 'project') {
+    if (currentTab === 'kanban') renderKanban();
+    if (currentTab === 'overview') renderOverview();
+    if (currentTab === 'graph') renderGraph();
+  }
+  if (drawerMeetingId) await renderDrawerTasks(drawerMeetingId);
+}
 
 $('mt-delete').addEventListener('click', async () => {
   await window.api.deleteTask(editingTaskId);
@@ -1171,6 +1307,7 @@ $('mt-cancel').addEventListener('click', closeModals);
 
 // Importação: confirmar nome + projeto.
 function askImport(filePath, kind = "video") {
+  if (busyWarning()) return;
   // Transcrição pronta não passa pelo Whisper: motor parado não impede.
   if (kind === 'video' && !engineReady) {
     toast('O motor de transcrição não está disponível — veja as <strong>Configurações</strong>.');
@@ -1202,17 +1339,23 @@ $('mc-form').addEventListener('submit', async (e) => {
   closeModals();
 
   if (pendingKind === 'transcript') {
-    startProcessing($('mc-file').textContent, projectId);
+    startProcessing(nome, projectId);
     const r = await window.api.importTranscript({ filePath: pendingVideo, name: nome, projectId, autoName });
     if (!r.ok) {
-      $('overlay-process').hidden = true;
+      stopProcessing();
       toast(`Não deu para importar: ${r.message}`);
     }
     return;
   }
 
-  startProcessing($('mc-file').textContent, projectId);
-  await window.api.startJob({ videoPath: pendingVideo, name: nome, projectId, autoName });
+  startProcessing(nome, projectId);
+  const r = await window.api.startJob({ videoPath: pendingVideo, name: nome, projectId, autoName });
+  if (r && r.started === false) {
+    // Outra transcrição ainda roda (talvez minimizada): sem isto a tela
+    // ficaria em "Iniciando" para sempre.
+    stopProcessing();
+    toast(`Não deu para começar: ${r.message}`);
+  }
 });
 
 $('mc-cancel').addEventListener('click', closeModals);
@@ -1301,6 +1444,7 @@ function releaseAudio(contexto) {
  * gravação parte de dentro de um projeto.
  */
 async function startRecording(preferido = '') {
+  if (busyWarning()) return;
   if (!engineReady) { toast('O motor de transcrição não está disponível.'); return; }
   if (recorder) { toast('Já existe uma gravação em andamento.'); return; }
 
@@ -1391,15 +1535,56 @@ $('record-stop').addEventListener('click', async () => {
     mimeType: blob.type,
   });
   if (result && result.started === false) {
-    $('overlay-process').hidden = true;
+    stopProcessing();
     toast(`Não deu para processar: ${result.message}`);
   }
 });
 
 // --- Processamento (pipeline) -----------------------------------------------------------------
 
-const STAGE_RANGE = { audio: [0, 0.1], transcription: [0.1, 0.72], export: [0.72, 0.78], extract: [0.78, 1] };
-const STAGE_LABELS = { audio: 'Extraindo áudio', transcription: 'Transcrevendo', export: 'Gravando arquivos', extract: 'Extraindo tarefas' };
+const STAGE_RANGE = { audio: [0, 0.1], transcription: [0.1, 0.72], export: [0.72, 0.78], analyze: [0.78, 1] };
+const STAGE_LABELS = { audio: 'Extraindo áudio', transcription: 'Transcrevendo', export: 'Gravando arquivos', analyze: 'Analisando a reunião' };
+const DOC_KINDS_ALL = ['documento'];
+const DOC_NAMES = { documento: 'documento' };
+
+/**
+ * Estado único da tela de trabalho.
+ *
+ * A mesma informação — etapa, percentual, nome — aparece em dois lugares: na
+ * tela cheia e, quando ela é minimizada, no chip no pé da barra lateral. Tudo
+ * escreve aqui e `renderProcessing` desenha dos dois lados, para nenhum deles
+ * ficar para trás.
+ */
+const proc = { active: false, minimized: false, stage: '', pct: 0, name: '' };
+
+function renderProcessing() {
+  const pct = `${Math.round(proc.pct * 100)}%`;
+  $('process-name').textContent = proc.name;
+  $('process-stage').textContent = proc.stage;
+  $('process-pct').textContent = pct;
+  $('overlay-process').hidden = !proc.active || proc.minimized;
+
+  $('jobchip').hidden = !proc.active || !proc.minimized;
+  $('jobchip-stage').textContent = proc.stage;
+  $('jobchip-name').textContent = proc.name;
+  $('jobchip-pct').textContent = pct;
+  $('jobchip-fill').style.transform = `scaleX(${proc.pct})`;
+
+  processNet?.setProgress(proc.pct);
+}
+
+function setProcessing(stage, pct) {
+  proc.stage = stage;
+  if (typeof pct === 'number') proc.pct = Math.min(1, Math.max(0, pct));
+  renderProcessing();
+}
+
+function ensureProcessNet() {
+  if (!processNet) processNet = window.createNetwork($('process-net'));
+  // O canvas pode ter nascido escondido, sem tamanho: mede de novo.
+  window.dispatchEvent(new Event('resize'));
+  processNet.setMode('working');
+}
 
 /**
  * Abre a tela de processamento: a rede e uma frase que acompanha a etapa.
@@ -1409,18 +1594,61 @@ const STAGE_LABELS = { audio: 'Extraindo áudio', transcription: 'Transcrevendo'
  */
 function startProcessing(label, projectId) {
   jobProjectId = projectId || '';
-  $('process-stage').textContent = 'Iniciando';
-  $('process-pct').textContent = '0%';
-  $('overlay-process').hidden = false;
-  if (!processNet) processNet = window.createNetwork($('process-net'));
-  window.dispatchEvent(new Event('resize'));
-  processNet.setMode('working');
+  Object.assign(proc, { active: true, minimized: false, stage: 'Iniciando', pct: 0, name: label || '' });
+  renderProcessing();
+  ensureProcessNet();
   processNet.setProgress(0);
 }
 
-$('process-cancel').addEventListener('click', () => {
+/**
+ * Minimizar não interrompe nada: o trabalho segue no processo principal e a
+ * tela cheia vira o chip da barra lateral, de onde se volta com um clique.
+ */
+function minimizeProcessing() {
+  if (!proc.active) return;
+  proc.minimized = true;
+  renderProcessing();
+}
+
+function restoreProcessing() {
+  if (!proc.active) return;
+  proc.minimized = false;
+  renderProcessing();
+  ensureProcessNet();
+}
+
+function stopProcessing() {
+  docPhase = false;
+  Object.assign(proc, { active: false, minimized: false });
+  renderProcessing();
+}
+
+function cancelCurrent() {
   if (docPhase) window.api.cancelDoc();
   else window.api.cancelJob();
+}
+
+/**
+ * A tela de trabalho acompanha um job por vez.
+ *
+ * Com ela minimizada o app fica livre, e daria para começar outra reunião ou
+ * pedir PDFs por cima — os dois jobs escreveriam no mesmo progresso e o
+ * cancelar não saberia qual deles parar. Avisa e mostra onde está o que roda.
+ */
+function busyWarning() {
+  if (!proc.active) return false;
+  toast(`Espere <strong>${proc.name || 'o processamento'}</strong> terminar — o progresso está na barra lateral.`);
+  if (proc.minimized) $('jobchip-main').classList.add('is-nudged');
+  setTimeout(() => $('jobchip-main').classList.remove('is-nudged'), 900);
+  return true;
+}
+
+$('process-cancel').addEventListener('click', cancelCurrent);
+$('jobchip-cancel').addEventListener('click', cancelCurrent);
+$('process-minimize').addEventListener('click', minimizeProcessing);
+$('jobchip-open').addEventListener('click', restoreProcessing);
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && proc.active && !proc.minimized) minimizeProcessing();
 });
 
 /**
@@ -1428,57 +1656,141 @@ $('process-cancel').addEventListener('click', () => {
  *
  * A tela de trabalho continua aberta na etapa dos PDFs em vez de fechar e
  * deixar o resto acontecer atrás de avisos no rodapé. O Claude não informa
- * percentual, então cada passo do stream empurra a barra um pouco — resumo na
- * primeira metade, tarefas na segunda.
+ * percentual, então cada passo do stream empurra a barra um pouco, dentro da
+ * fatia do documento em curso.
  */
 let docPhase = false;
 let docProgress = 0;
+let docKinds = DOC_KINDS_ALL;
 let pendingMeetingId = '';
 let jobSummary = null;   // o que contar quando tudo terminar
 
-function enterDocPhase(meetingId) {
+function docStageLabel(kinds) {
+  const nomes = kinds.map((k) => DOC_NAMES[k] || k);
+  return `Gerando ${nomes.join(' e ')} em PDF`;
+}
+
+// --- Prompts editáveis (Configurações) -----------------------------------------------------------------
+
+let editingPromptKind = '';
+
+/**
+ * O seletor lista o que o processo principal registra: um prompt novo entra
+ * no código e aparece aqui, sem botão novo na tela.
+ */
+async function renderPromptChoices() {
+  const sel = $('set-prompt-kind');
+  const atual = sel.value;
+  const lista = await window.api.listPrompts();
+  sel.replaceChildren(...lista.map((p) => new Option(p.label, p.kind)));
+  if (lista.some((p) => p.kind === atual)) sel.value = atual;
+}
+
+/**
+ * Abre o prompt de uma etapa para leitura e edição.
+ *
+ * O texto vem do processo principal: o padrão do app ou a versão que a pessoa
+ * gravou. A lista de placeholders fica visível o tempo todo, porque é o que
+ * não pode sair — o app preenche esses trechos na hora de rodar.
+ */
+async function openPromptModal(kind) {
+  const p = await window.api.getPrompt(kind);
+  editingPromptKind = kind;
+  $('mp-title').textContent = p.label || 'Prompt';
+  $('mp-status').textContent = p.isCustom
+    ? 'editado por você — o padrão do app segue guardado'
+    : 'padrão do app';
+  $('mp-text').value = p.text;
+  $('mp-reset').hidden = !p.isCustom;
+  $('mp-error').textContent = '';
+
+  const help = $('mp-help');
+  help.replaceChildren('O app preenche na hora os trechos entre chaves: ');
+  p.placeholders.forEach((ph, i) => {
+    const code = document.createElement('code');
+    code.textContent = ph;
+    if (i) help.append(', ');
+    help.append(code);
+  });
+  help.append(`. Obrigatórios: ${p.required.join(', ')}.`);
+
+  openModal('modal-prompt');
+  $('mp-text').focus();
+}
+
+$('set-prompt-open').addEventListener('click', () => {
+  const kind = $('set-prompt-kind').value;
+  if (kind) openPromptModal(kind);
+});
+
+$('mp-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const r = await window.api.savePrompt(editingPromptKind, $('mp-text').value);
+  if (!r.ok) { $('mp-error').textContent = r.message; return; }
+  closeModals();
+  toast(r.isCustom ? 'Prompt salvo — vale a partir da próxima reunião.' : 'Prompt igual ao padrão: nada a guardar.');
+});
+
+$('mp-reset').addEventListener('click', async () => {
+  await window.api.resetPrompt(editingPromptKind);
+  await openPromptModal(editingPromptKind);
+  toast('Prompt restaurado ao padrão do app.');
+});
+
+$('mp-cancel').addEventListener('click', closeModals);
+
+function enterDocPhase(meetingId, kinds = DOC_KINDS_ALL, { name } = {}) {
   docPhase = true;
   docProgress = 0;
+  docKinds = kinds.length ? kinds : DOC_KINDS_ALL;
   pendingMeetingId = meetingId || '';
-  $('process-stage').textContent = 'Gerando resumo e tarefas';
-  $('process-pct').textContent = '0%';
-  $('overlay-process').hidden = false;
-  processNet?.setMode('working');
-  processNet?.setProgress(0);
+  if (!proc.active) {
+    // Veio do botão da reunião, não do fim do pipeline: abre a tela do zero.
+    Object.assign(proc, { active: true, minimized: false, name: name || '' });
+  }
+  ensureProcessNet();
+  setProcessing(docStageLabel(docKinds), 0);
 }
 
 function advanceDocs(kind) {
-  const base = kind === 'tarefas' ? 0.5 : 0;
-  const teto = kind === 'tarefas' ? 0.97 : 0.5;
-  docProgress = Math.min(teto, Math.max(base, docProgress + 0.07));
-  processNet?.setProgress(docProgress);
-  $('process-pct').textContent = `${Math.round(docProgress * 100)}%`;
+  const fatia = 1 / docKinds.length;
+  const indice = Math.max(0, docKinds.indexOf(kind));
+  const base = indice * fatia;
+  const teto = (indice + 1) * fatia - 0.03;
+  docProgress = Math.min(teto, Math.max(base, docProgress + 0.14 * fatia));
+  setProcessing(proc.stage, docProgress);
 }
 
 window.api.on('job:event', async (event) => {
   if (event.event === 'stage') {
     const [from, to] = STAGE_RANGE[event.key] || [0, 1];
     const overall = from + ((to - from) * (event.progress || 0)) / 100;
-    processNet?.setProgress(overall);
-    $('process-pct').textContent = `${Math.round(overall * 100)}%`;
-    $('process-stage').textContent = STAGE_LABELS[event.key] || event.label || '';
+    setProcessing(STAGE_LABELS[event.key] || event.label || '', overall);
   } else if (event.event === 'done') {
-    processNet?.setProgress(1);
-    $('process-stage').textContent = 'Transcrição pronta';
+    setProcessing('Transcrição pronta', 1);
     await refreshAll();
-    if (jobProjectId) openProject(jobProjectId, event.tasksCreated ? 'kanban' : 'meetings');
-    // Nada de aviso agora: a tela de trabalho segue aberta para os documentos,
-    // e uma notificação por cima dela só atrapalharia. O que aconteceu aqui
-    // entra no aviso único do fim.
+    // Minimizado, a pessoa está em outra coisa: o projeto não a puxa para lá.
+    if (jobProjectId && !proc.minimized) {
+      openProject(jobProjectId, event.tasksCreated ? 'kanban' : 'meetings');
+    }
+    // Nada de aviso agora: o que aconteceu aqui entra no aviso único do fim.
     jobSummary = { renamedTo: event.renamedTo || '', tasksCreated: event.tasksCreated || 0 };
-    setTimeout(() => enterDocPhase(event.meetingId), 700);
+    const docs = Array.isArray(event.docs) ? event.docs : [];
+    if (docs.length) {
+      setTimeout(() => enterDocPhase(event.meetingId, docs), 700);
+    } else {
+      // Nenhum PDF ligado em Configurações: a reunião está pronta aqui mesmo.
+      setProcessing('Pronto', 1);
+      await pausaCurta();
+      const wasMinimized = proc.minimized;
+      stopProcessing();
+      announceReady({ meetingId: event.meetingId, kinds: [], wasMinimized });
+    }
   } else if (event.event === 'error') {
-    docPhase = false;
-    $('overlay-process').hidden = true;
+    stopProcessing();
     toast(`Não deu para processar: ${event.message || 'erro desconhecido'}`);
   } else if (event.event === 'canceled') {
-    docPhase = false;
-    $('overlay-process').hidden = true;
+    stopProcessing();
   }
 });
 
@@ -1489,13 +1801,12 @@ window.api.on('doc:progress', ({ kind }) => {
 
 window.api.on('doc:done', async (result) => {
   const meetingId = result.meetingId || pendingMeetingId;
+  let wasMinimized = false;
   if (docPhase) {
-    processNet?.setProgress(1);
-    $('process-pct').textContent = '100%';
-    $('process-stage').textContent = 'Pronto';
+    setProcessing('Pronto', 1);
     await pausaCurta();
-    $('overlay-process').hidden = true;
-    docPhase = false;
+    wasMinimized = proc.minimized;
+    stopProcessing();
     pendingMeetingId = '';
   }
 
@@ -1504,21 +1815,30 @@ window.api.on('doc:done', async (result) => {
   if (result.canceled) { toast('Geração cancelada.'); return; }
   if (!result.ok) {
     toast(`Os documentos não foram gerados. ${result.message || ''}`.trim());
-    if (meetingId) openDrawer(meetingId);
+    if (meetingId && !wasMinimized) openDrawer(meetingId);
     return;
   }
 
-  // Um aviso só, no fim: nome, tarefas e documentos numa frase.
+  announceReady({ meetingId, kinds: result.kinds || [], wasMinimized });
+});
+
+/**
+ * Um aviso só, no fim: nome, tarefas e documentos numa frase.
+ *
+ * Se a tela estava minimizada, a pessoa seguiu trabalhando em outra coisa —
+ * o aviso conta, mas o painel da reunião não abre por cima do que ela faz.
+ */
+function announceReady({ meetingId, kinds, wasMinimized }) {
   const partes = [];
   if (jobSummary?.renamedTo) partes.push(`Reunião pronta como <strong>${jobSummary.renamedTo}</strong>`);
   else partes.push('Reunião pronta');
   if (jobSummary?.tasksCreated) partes.push(`<strong>${jobSummary.tasksCreated} tarefas</strong> no kanban`);
-  const nomes = result.kinds.map((k) => (k === 'tarefas' ? 'tarefas' : 'resumo'));
+  const nomes = kinds.map((k) => DOC_NAMES[k] || k);
   if (nomes.length) partes.push(`${nomes.join(' e ')} em PDF`);
   jobSummary = null;
   toast(partes.join(' · '));
-  if (meetingId) openDrawer(meetingId);
-});
+  if (meetingId && !wasMinimized) openDrawer(meetingId);
+}
 
 function pausaCurta() {
   return new Promise((resolve) => setTimeout(resolve, 700));

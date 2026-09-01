@@ -92,12 +92,39 @@ tarefas.
 
 ### Depois da transcrição
 
-O Claude lê a transcrição e devolve as ações combinadas em JSON — título,
-descrição, responsável e prioridade. Elas viram cards no backlog do projeto,
-cada um ligado à reunião de origem. Sem projeto, essa etapa é pulada: tarefa
-sem projeto não teria onde viver.
+O Claude lê a transcrição **uma vez** (`prompts/analise.md`) e devolve a
+análise da reunião em JSON: título, visão geral, pontos discutidos, decisões,
+riscos, tarefas e pendências. O app normaliza esse JSON (`analysis.js`) e o
+guarda em `analise.json`, na pasta da reunião.
 
-Resumo e tarefas em PDF continuam sob demanda, no painel da reunião.
+Dessa análise saem as duas coisas, por construção iguais:
+
+- **Tarefas no Kanban** — cada tarefa vira um card no backlog do projeto,
+  ligado à reunião. O painel da reunião lista essas tarefas e abre o card. Sem
+  projeto, a etapa é pulada: tarefa sem projeto não teria onde viver.
+- **Documento em PDF** — o app monta o HTML a partir da análise
+  (`document-html.js`) e o imprime pelo Edge ou Chrome. A tabela de tarefas do
+  PDF é a mesma lista dos cards.
+
+Cada uma liga e desliga em **Configurações → Depois da transcrição**
+(`pipeline-steps.js` decide o que roda; com as duas desligadas e sem nome
+automático, o Claude nem é chamado). O botão **Gerar documentos**, no painel da
+reunião, monta o PDF a partir da análise guardada — e, numa reunião de antes da
+análise existir, pede a análise primeiro.
+
+No mesmo cartão, **Prompts** lista as etapas num seletor (a lista vem de
+`prompts-store.js`: um prompt novo registrado ali aparece sozinho) e abre as
+instruções escolhidas num modal para ler e editar. O padrão fica em `prompts/*.md`; a edição vai para a pasta de
+dados do usuário e vale por cima (`prompts-store.js`) — restaurar o padrão é
+apagar essa cópia, e atualizar o app nunca sobrescreve o que a pessoa escreveu.
+O editor recusa texto sem os placeholders obrigatórios (`{{TRANSCRICAO}}`,
+`{{PDF}}`…), porque é por eles que o app passa os caminhos.
+
+Enquanto tudo isso roda, a tela de processamento pode ser **minimizada** (botão
+ou `Esc`): o progresso segue num chip no pé da barra lateral, o app fica livre
+e um clique no chip traz a tela de volta. Ao terminar, o aviso único aparece
+do mesmo jeito — só não puxa a pessoa para o projeto se ela estava em outra
+coisa.
 
 ## Onde ficam os dados
 
@@ -126,7 +153,12 @@ desktop/
 ├── main.js              # janela, IPC, pipeline, gravação e extração
 ├── engines.js           # os dois motores: nativo (GPU) e container (CPU)
 ├── docker-args.js       # montagem do comando do container
-├── claude-jobs.js       # prompts e execução do `claude -p`
+├── claude-jobs.js       # a chamada ao `claude -p` (análise da reunião)
+├── analysis.js          # normaliza e guarda a análise (analise.json)
+├── document-html.js     # o PDF da reunião, montado a partir da análise
+├── pipeline-steps.js    # quais etapas rodam depois da transcrição (Configurações)
+├── prompts-store.js     # prompts editados por cima do padrão (Configurações → Prompts)
+├── updater.js           # Configurações → Sobre: git pull --ff-only, npm/pip se mudaram, relaunch
 ├── transcript-import.js # texto e legenda viram reunião (.txt .md .srt .vtt)
 ├── library.js           # a pasta de saída lida como biblioteca (CRUD)
 ├── db.js                # banco do workspace (SQLite) e migração dos JSONs
@@ -134,10 +166,8 @@ desktop/
 ├── tasks.js             # tarefas do kanban
 ├── workspace.js         # traduz disco → projeto/reunião/tarefa
 ├── preload.js           # ponte segura entre janela e sistema
-├── prompts/             # instruções editáveis
-│   ├── extrair.md       # extração estruturada (JSON de tarefas)
-│   ├── tarefas.md       # PDF de tarefas
-│   └── resumo.md        # PDF de resumo
+├── prompts/             # instruções padrão, editáveis também pelo app
+│   └── analise.md       # a leitura única: análise da reunião em JSON
 └── renderer/
     ├── index.html       # shell: sidebar, vistas, drawer, overlays
     ├── styles.css       # tema neural (azul-tinta, ciano, violeta)

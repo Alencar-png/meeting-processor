@@ -1113,13 +1113,26 @@ const chatterbox = createChatterboxWorker({
   },
 });
 
-/** O Chatterbox fala num WAV; lemos e apagamos. Falha cai para a voz do sistema. */
-async function speakWithChatterbox(text, settings) {
+/**
+ * O Chatterbox fala num WAV; lemos e apagamos. Cada frase pronta vai na hora
+ * para a janela (`tts:event` chunk), que começa a tocar enquanto o resto é
+ * gerado. Falha cai para a voz do sistema.
+ */
+async function speakWithChatterbox(text, settings, requestId) {
   // A primeira fala carrega ~3 GB: sem aviso, parece que nada aconteceu.
-  if (!chatterbox.status().running) send('tts:event', { kind: 'loading' });
+  if (!chatterbox.status().running) send('tts:event', { kind: 'loading', requestId });
   const out = path.join(app.getPath('temp'), `synapse-fala-${Date.now()}-${process.pid}.wav`);
   const r = await chatterbox.speak({
     text, out, ref: settings.tts.refVoice || '', exaggeration: settings.tts.exaggeration,
+    onChunk: ({ index, total, out: parte }) => {
+      try {
+        send('tts:event', { kind: 'chunk', requestId, index, total, audio: fs.readFileSync(parte), mimeType: 'audio/wav' });
+      } catch (err) {
+        send('job:log', `Chatterbox: pedaço ${index}/${total} não pôde ser lido (${err.message}).`);
+      } finally {
+        try { fs.unlinkSync(parte); } catch { /* já removido */ }
+      }
+    },
   });
   if (!r.ok) return { ok: false, fallback: true, message: `Chatterbox indisponível: ${r.message} Usando a voz do sistema.` };
   try {
@@ -1131,9 +1144,9 @@ async function speakWithChatterbox(text, settings) {
   }
 }
 
-ipcMain.handle('tts:speak', (_e, { text }) => {
+ipcMain.handle('tts:speak', (_e, { text, requestId = '' }) => {
   const settings = loadSettings();
-  if (settings.tts.engine === 'chatterbox') return speakWithChatterbox(text, settings);
+  if (settings.tts.engine === 'chatterbox') return speakWithChatterbox(text, settings, requestId);
   if (settings.tts.engine !== 'neural') return { ok: false, fallback: true, message: '' };
   const native = nativeStatus(PROJECT_ROOT);
   return tts.synthesize({

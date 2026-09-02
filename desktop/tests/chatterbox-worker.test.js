@@ -89,6 +89,29 @@ test('sobe o worker uma vez, espera o ready e responde por id', async () => {
   assert.strictEqual(w.status().running, false);
 });
 
+test('pedaços (chunk) chegam pelo onChunk antes da resposta final, sem resolver o pedido', async () => {
+  const child = fakeChild();
+  const w = createChatterboxWorker({ projectRoot: root, spawn: () => child, setTimer: () => 1, clearTimer: () => {} });
+  const chunks = [];
+  const p = w.speak({ text: 'Uma. Duas.', out: 'C:\\t\\x.wav', onChunk: (c) => chunks.push(c) });
+  child.say({ event: 'ready', load_seconds: 1 });
+  await new Promise((r) => setImmediate(r));
+  const { id } = JSON.parse(child.written[0]);
+  child.say({ id, event: 'chunk', index: 1, total: 2, out: 'C:\\t\\x.parte1.wav' });
+  child.say({ id, event: 'chunk', index: 2, total: 2, out: 'C:\\t\\x.parte2.wav' });
+  let resolved = false;
+  p.then(() => { resolved = true; });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(resolved, false, 'chunk não fecha o pedido');
+  assert.deepStrictEqual(chunks, [
+    { index: 1, total: 2, out: 'C:\\t\\x.parte1.wav' },
+    { index: 2, total: 2, out: 'C:\\t\\x.parte2.wav' },
+  ]);
+  child.say({ id, ok: true, out: 'C:\\t\\x.wav', seconds: 9 });
+  const r = await p;
+  assert.strictEqual(r.ok, true);
+});
+
 test('erro ao carregar vira mensagem e o worker não fica pendurado', async () => {
   const child = fakeChild();
   const w = createChatterboxWorker({ projectRoot: root, spawn: () => child, setTimer: () => 1, clearTimer: () => {} });

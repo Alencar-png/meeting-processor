@@ -58,7 +58,7 @@ function createChatterboxWorker({
   let child = null;
   let ready = null;          // Promise que resolve quando o modelo carregou
   let nextId = 1;
-  const pending = new Map(); // id → { resolve }
+  const pending = new Map(); // id → { resolve, onChunk }
   let idleTimer = null;
   let loadSeconds = 0;
   let device = '';
@@ -89,7 +89,12 @@ function createChatterboxWorker({
     let msg;
     try { msg = JSON.parse(line); } catch { return; }
     if (msg.id !== undefined && pending.has(msg.id)) {
-      const { resolve } = pending.get(msg.id);
+      const { resolve, onChunk } = pending.get(msg.id);
+      if (msg.event === 'chunk') {
+        // Uma frase pronta antes do fim: quem pediu já pode tocar.
+        if (onChunk) onChunk({ index: Number(msg.index), total: Number(msg.total), out: msg.out });
+        return;
+      }
       pending.delete(msg.id);
       resolve(msg);
       return;
@@ -164,12 +169,12 @@ function createChatterboxWorker({
    * Sintetiza `text` no arquivo `out` (WAV). Sobe o worker se preciso.
    * Resolve `{ ok, out, seconds }` ou `{ ok: false, message }`.
    */
-  async function speak({ text, out, ref = '', exaggeration = 0.5, cfg = 0.5 }) {
+  async function speak({ text, out, ref = '', exaggeration = 0.5, cfg = 0.5, onChunk = null }) {
     const up = await start();
     if (!up.ok) return up;
     if (!child) return { ok: false, message: 'O worker de voz não está de pé.' };
     const id = nextId++;
-    const resposta = new Promise((resolve) => pending.set(id, { resolve }));
+    const resposta = new Promise((resolve) => pending.set(id, { resolve, onChunk }));
     child.stdin.write(`${JSON.stringify({ id, text, out, ref, exaggeration, cfg })}\n`);
     const r = await resposta;
     armIdle();

@@ -45,7 +45,9 @@ READY_LAYOUT = {
 OPTIONAL = {"Cangjie5_TC.json", "conds.pt"}
 
 # Frases longas demais estouram o modelo; cortamos em sentenças e emendamos.
-MAX_CHUNK_CHARS = 280
+# Pedaços curtos também fazem a primeira frase tocar mais cedo: quem ouve
+# recebe áudio enquanto o resto ainda é gerado.
+MAX_CHUNK_CHARS = 160
 _SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+")
 
 
@@ -179,9 +181,14 @@ class Speaker:
         ref: str | None = None,
         exaggeration: float = 0.5,
         cfg: float = 0.5,
+        on_chunk=None,
     ) -> float:
-        import soundfile as sf
+        """Fala o texto frase a frase.
 
+        Cada frase pronta vira um WAV próprio e ``on_chunk(index, total, path)``
+        é chamado na hora — quem ouve começa pela primeira frase enquanto as
+        seguintes ainda são geradas. No fim, o áudio inteiro vai para ``out``.
+        """
         t0 = time.time()
         # Analisar o áudio de referência custa dezenas de segundos em CPU; com
         # `audio_prompt_path` isso aconteceria a cada frase. Aqui a análise é
@@ -193,16 +200,25 @@ class Speaker:
             else:
                 self.model.conds = self._default_conds
             self._ref_key = key
+        chunks = split_text(text) or [text]
         partes = []
-        for chunk in split_text(text) or [text]:
-            partes.append(self.model.generate(
-                chunk, language_id="pt", exaggeration=exaggeration, cfg_weight=cfg,
-            ))
+        for i, chunk in enumerate(chunks):
+            wav = self.model.generate(chunk, language_id="pt", exaggeration=exaggeration, cfg_weight=cfg)
+            partes.append(wav)
+            if on_chunk is not None:
+                parte = out.with_name(f"{out.stem}.parte{i + 1}{out.suffix}")
+                self._write(parte, wav)
+                on_chunk(i + 1, len(chunks), parte)
         wav = self.torch.cat(partes, dim=-1) if len(partes) > 1 else partes[0]
+        self._write(out, wav)
+        return time.time() - t0
+
+    def _write(self, path: Path, wav) -> None:
         # soundfile em vez de torchaudio.save: a partir do torchaudio 2.9,
         # gravar exige o torchcodec, e o WAV aqui é só PCM.
-        sf.write(str(out), wav.squeeze(0).detach().cpu().numpy(), self.model.sr, subtype="PCM_16")
-        return time.time() - t0
+        import soundfile as sf
+
+        sf.write(str(path), wav.squeeze(0).detach().cpu().numpy(), self.model.sr, subtype="PCM_16")
 
 
 def serve(speaker: Speaker) -> None:
@@ -222,9 +238,13 @@ def serve(speaker: Speaker) -> None:
             emit({"ok": False, "message": "pedido não é JSON"})
             continue
         try:
+            def on_chunk(index, total, path, _id=req.get("id")):
+                emit({"id": _id, "event": "chunk", "index": index, "total": total, "out": str(path)})
+
             seconds = speaker.speak(
                 req["text"], Path(req["out"]), req.get("ref") or None,
                 float(req.get("exaggeration", 0.5)), float(req.get("cfg", 0.5)),
+                on_chunk=on_chunk,
             )
             emit({"id": req.get("id"), "ok": True, "out": req["out"], "seconds": round(seconds, 1)})
         except Exception as err:  # noqa: BLE001 — o worker não pode morrer por um pedido

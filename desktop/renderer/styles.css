@@ -834,7 +834,39 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 }
 .msg-tool::before { content: '▸ '; color: var(--violet); }
 .msg-tool.is-live::before { color: var(--cyan); }
-/* Ler esta resposta: um alto-falante discreto sob a bolha, ciano enquanto lê. */
+/* Voz de uma resposta: botão → progresso → player, sob a bolha. */
+.msg-voice { display: flex; flex-direction: column; gap: 4px; padding: 0 2px; min-width: 0; }
+.voice-progress { display: flex; align-items: center; gap: 8px; }
+.voice-bar {
+  position: relative;
+  width: 140px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-soft);
+  overflow: hidden;
+  flex: none;
+}
+.voice-fill {
+  display: block;
+  height: 100%;
+  transform-origin: left center;
+  transform: scaleX(0);
+  background: linear-gradient(90deg, var(--cyan), var(--violet));
+  transition: transform 320ms var(--ease);
+}
+.voice-bar.is-indeterminate .voice-fill {
+  transform: none;
+  width: 40%;
+  animation: voice-sweep 1.2s ease-in-out infinite;
+}
+@keyframes voice-sweep {
+  0%   { translate: -100% 0; }
+  100% { translate: 350% 0; }
+}
+.voice-label { font-family: var(--mono); font-size: 10px; color: var(--muted-dim); }
+.voice-player { width: min(360px, 100%); height: 32px; filter: invert(0.92) hue-rotate(180deg) saturate(0.8); border-radius: 999px; }
+@media (prefers-reduced-motion: reduce) { .voice-bar.is-indeterminate .voice-fill { animation: none; width: 100%; opacity: 0.5; } }
+
 .msg-actions { display: flex; gap: 4px; padding: 0 2px; }
 .msg-speak {
   padding: 2px 8px;

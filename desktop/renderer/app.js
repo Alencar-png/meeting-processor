@@ -755,22 +755,7 @@ function messageBox(msg) {
   bubble.className = 'bubble';
   renderRichText(bubble, msg.text);
   box.append(bubble);
-  if (msg.role === 'ai' && msg.text && !msg.error) {
-    // Ler esta resposta em voz alta — de novo, ou só ela, sem ligar o modo Voz.
-    const acoes = document.createElement('div');
-    acoes.className = 'msg-actions';
-    const falar = document.createElement('button');
-    falar.type = 'button';
-    falar.className = 'msg-speak';
-    falar.title = 'Ler em voz alta';
-    falar.textContent = '🔊';
-    falar.addEventListener('click', () => {
-      if (speakingButton === falar) stopSpeaking();
-      else speak(msg.text, falar);
-    });
-    acoes.append(falar);
-    box.append(acoes);
-  }
+  if (msg.role === 'ai' && msg.text && !msg.error) box.append(voiceBox(msg));
   return box;
 }
 
@@ -857,7 +842,14 @@ window.api.on('chat:event', (ev) => {
       const nome = projectById(ev.projectId)?.name || 'projeto';
       toast(`O assistente respondeu em <strong>${nome}</strong>.`);
     }
-    if (voiceMode && ev.ok && ev.text) speak(ev.text);
+    if (voiceMode && ev.ok && ev.text) {
+      // A resposta acabou de ser desenhada pelo renderChat: lê pelo componente
+      // dela, com progresso e player, como se a pessoa tivesse clicado.
+      setTimeout(() => {
+        const ultima = [...document.querySelectorAll('#chat-thread .msg-ai .msg-speak')].pop();
+        if (ultima) ultima.click();
+      }, 50);
+    }
     return;
   }
   if (!live) return;
@@ -914,29 +906,82 @@ function speakable(text) {
     .trim();
 }
 
-let currentAudio = null;      // a fala neural em reprodução
 let warnedFallback = false;   // avisa uma vez por sessão que caiu para a voz do sistema
-let speakingButton = null;    // o 🔊 da mensagem que está sendo lida, se foi por ele
 
-/** Marca (ou desmarca) o botão da mensagem em leitura. */
-function setSpeakingButton(btn) {
-  if (speakingButton) { speakingButton.classList.remove('is-speaking'); speakingButton.textContent = '🔊'; speakingButton.title = 'Ler em voz alta'; }
-  speakingButton = btn || null;
-  if (speakingButton) { speakingButton.classList.add('is-speaking'); speakingButton.textContent = '⏹'; speakingButton.title = 'Parar a leitura'; }
+// --- Voz: geração com progresso, pedaços tocando na hora e player no fim -----------------
+
+/**
+ * Um "trabalho de voz" por resposta. Estados do componente sob a bolha:
+ * 🔊 (parado) → barra de progresso (gerando: carga, frase N de M) → player
+ * com o áudio inteiro, para ouvir de novo e arrastar. Os pedaços (uma frase
+ * cada) tocam assim que chegam, antes do fim da geração.
+ *
+ * O áudio gerado fica em memória por mensagem: clicar de novo toca, não gera.
+ */
+const voiceJobs = new Map();      // requestId → job
+const voiceCache = new Map();     // chave da mensagem → { url, mimeType }
+let currentAudio = null;          // o que está tocando agora (chunk, player ou amostra)
+let currentJob = null;            // o trabalho cuja fila de pedaços toca
+let nextVoiceId = 1;
+
+const voiceKey = (msg) => msg.id ? `m${msg.id}` : `t${msg.text.length}:${msg.text.slice(0, 80)}`;
+
+function voiceBox(msg) {
+  const box = document.createElement('div');
+  box.className = 'msg-voice';
+  const cached = voiceCache.get(voiceKey(msg));
+  if (cached) { mountPlayer(box, cached); return box; }
+
+  const falar = document.createElement('button');
+  falar.type = 'button';
+  falar.className = 'msg-speak';
+  falar.title = 'Ler em voz alta';
+  falar.textContent = '🔊 ouvir';
+  falar.addEventListener('click', () => startVoiceJob(msg, box));
+  box.append(falar);
+  return box;
 }
 
-function speakingStarted() { $('chat-mute').hidden = false; }
-function speakingEnded() { $('chat-mute').hidden = true; setSpeakingButton(null); }
-
-/** "+5%" → 1.05: a voz do sistema fala em multiplicador. */
-function systemRate() {
-  const pct = Number(String(settings?.tts?.rate || '+0%').replace('%', ''));
-  return Number.isFinite(pct) ? Math.min(2, Math.max(0.5, 1 + pct / 100)) : 1;
+function mountProgress(box, label) {
+  box.replaceChildren();
+  const wrap = document.createElement('div');
+  wrap.className = 'voice-progress';
+  const bar = document.createElement('div');
+  bar.className = 'voice-bar is-indeterminate';
+  const fill = document.createElement('span');
+  fill.className = 'voice-fill';
+  bar.append(fill);
+  const text = document.createElement('span');
+  text.className = 'voice-label';
+  text.textContent = label;
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'msg-speak';
+  cancel.textContent = '✕';
+  cancel.title = 'Cancelar';
+  wrap.append(bar, text, cancel);
+  box.append(wrap);
+  return { bar, fill, text, cancel };
 }
 
-/** A voz do sistema: offline, sem prosódia — o plano B, ou a escolha de quem prefere. */
-function speakWithSystem(fala) {
-  if (!('speechSynthesis' in window)) { speakingEnded(); return; }
+function mountPlayer(box, { url, mimeType }) {
+  box.replaceChildren();
+  const audio = document.createElement('audio');
+  audio.className = 'voice-player';
+  audio.controls = true;
+  audio.preload = 'metadata';
+  const source = document.createElement('source');
+  source.src = url;
+  source.type = mimeType || 'audio/wav';
+  audio.append(source);
+  audio.addEventListener('play', () => { stopSpeaking({ keep: audio }); currentAudio = audio; });
+  box.append(audio);
+  return audio;
+}
+
+/** Sistema (speechSynthesis) não dá áudio para um player: lê e volta ao botão. */
+function speakWithSystem(fala, onEnd = () => {}) {
+  if (!('speechSynthesis' in window)) { onEnd(); return; }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(fala);
   u.lang = 'pt-BR';
@@ -945,58 +990,144 @@ function speakWithSystem(fala) {
     : null;
   const voz = escolhida || pickVoice();
   if (voz) u.voice = voz;
-  u.rate = systemRate();
-  u.onstart = speakingStarted;
-  u.onend = speakingEnded;
-  u.onerror = speakingEnded;
+  const pct = Number(String(settings?.tts?.rate || '+0%').replace('%', ''));
+  u.rate = Number.isFinite(pct) ? Math.min(2, Math.max(0.5, 1 + pct / 100)) : 1;
+  u.onstart = () => { $('chat-mute').hidden = false; };
+  u.onend = () => { $('chat-mute').hidden = true; onEnd(); };
+  u.onerror = () => { $('chat-mute').hidden = true; onEnd(); };
   speechSynthesis.speak(u);
 }
 
-/**
- * Lê a resposta. Primeiro a voz neural (Edge, via Python do app); se ela não
- * vier — sem internet, sem o pacote, motor desligado — a voz do sistema lê.
- */
+/** Toca uma fila de pedaços, um após o outro, conforme chegam. */
+function pumpQueue(job) {
+  if (job.playing || job.canceled) return;
+  const next = job.queue.shift();
+  if (!next) {
+    if (job.done && job.finish) job.finish();
+    return;
+  }
+  job.playing = true;
+  const audio = new Audio(next);
+  currentAudio = audio;
+  currentJob = job;
+  $('chat-mute').hidden = false;
+  const fim = () => {
+    job.playing = false;
+    URL.revokeObjectURL(next);
+    if (currentAudio === audio) { currentAudio = null; $('chat-mute').hidden = true; }
+    pumpQueue(job);
+  };
+  audio.addEventListener('ended', fim);
+  audio.addEventListener('error', fim);
+  audio.play().catch(fim);
+}
+
+async function startVoiceJob(msg, box) {
+  const fala = speakable(msg.text);
+  if (!fala) return;
+  stopSpeaking();
+
+  const requestId = `v${nextVoiceId++}`;
+  const engine = settings?.tts?.engine || 'neural';
+  const job = { requestId, box, queue: [], playing: false, done: false, canceled: false, finish: null };
+  voiceJobs.set(requestId, job);
+  const ui = mountProgress(box, engine === 'chatterbox' ? 'preparando a voz…' : 'gerando a fala…');
+  ui.cancel.addEventListener('click', () => {
+    job.canceled = true;
+    voiceJobs.delete(requestId);
+    stopSpeaking();
+    box.replaceChildren(voiceBox(msg).firstChild);
+  });
+
+  if (engine === 'system') {
+    ui.text.textContent = 'lendo com a voz do sistema…';
+    speakWithSystem(fala, () => { if (!job.canceled) box.replaceChildren(voiceBox(msg).firstChild); });
+    return;
+  }
+
+  const r = await window.api.ttsSpeak(fala, requestId);
+  if (job.canceled) return;
+  voiceJobs.delete(requestId);
+
+  if (!r.ok || !r.audio) {
+    if (r.fallback && r.message && !warnedFallback) { warnedFallback = true; toast(r.message); }
+    ui.text.textContent = 'lendo com a voz do sistema…';
+    speakWithSystem(fala, () => { if (!job.canceled) box.replaceChildren(voiceBox(msg).firstChild); });
+    return;
+  }
+
+  const blob = new Blob([r.audio], { type: r.mimeType || 'audio/wav' });
+  const cached = { url: URL.createObjectURL(blob), mimeType: r.mimeType || 'audio/wav' };
+  voiceCache.set(voiceKey(msg), cached);
+  ui.fill.style.transform = 'scaleX(1)';
+  ui.bar.classList.remove('is-indeterminate');
+  ui.text.textContent = 'pronto';
+
+  // Se nenhum pedaço tocou (Edge neural não manda pedaços), toca o inteiro agora.
+  const montar = () => { const player = mountPlayer(box, cached); return player; };
+  if (!job.queue.length && !job.playing) {
+    const player = montar();
+    player.play().catch(() => {});
+  } else {
+    // Deixa a fila de pedaços terminar; aí troca pela versão inteira.
+    job.done = true;
+    job.finish = montar;
+    pumpQueue(job);
+  }
+}
+
+window.api.on('tts:event', (ev) => {
+  const job = ev.requestId ? voiceJobs.get(ev.requestId) : null;
+  if (ev.kind === 'loading') {
+    if (job) job.box.querySelector('.voice-label').textContent = 'carregando o Chatterbox (~30 s na primeira vez)…';
+    else toast('Carregando o Chatterbox pela primeira vez — leva cerca de meio minuto.');
+    return;
+  }
+  if (ev.kind === 'chunk' && job && !job.canceled) {
+    const label = job.box.querySelector('.voice-label');
+    const fill = job.box.querySelector('.voice-fill');
+    const bar = job.box.querySelector('.voice-bar');
+    if (label) label.textContent = `frase ${ev.index} de ${ev.total}`;
+    if (bar) bar.classList.remove('is-indeterminate');
+    if (fill) fill.style.transform = `scaleX(${ev.index / ev.total})`;
+    const blob = new Blob([ev.audio], { type: ev.mimeType || 'audio/wav' });
+    job.queue.push(URL.createObjectURL(blob));
+    pumpQueue(job);
+  }
+});
+
+/** Lê um texto avulso (a amostra de Configurações), sem mensagem nem player. */
 async function speak(text, button = null) {
   const fala = speakable(text);
   if (!fala) return;
   stopSpeaking();
-  setSpeakingButton(button);
-  if (button) button.classList.add('is-busy');
-  // O Chatterbox leva segundos por frase (e dezenas na primeira, carregando):
-  // o botão de amostra avisa que está pensando, em vez de parecer morto.
-  const amostra = $('set-tts-sample');
-  const cbAtivo = settings?.tts?.engine === 'chatterbox';
-  if (cbAtivo) { amostra.classList.add('is-busy'); amostra.textContent = 'Gerando…'; }
-  const r = await window.api.ttsSpeak(fala);
-  if (cbAtivo) { amostra.classList.remove('is-busy'); amostra.textContent = 'Ouvir amostra'; }
-  if (button) button.classList.remove('is-busy');
-  if (speakingButton !== button) return;   // a pessoa pediu outra coisa nesse meio-tempo
-  if (r.ok && r.audio) {
-    const blob = new Blob([r.audio], { type: r.mimeType || 'audio/mpeg' });
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    currentAudio = audio;
-    speakingStarted();
-    const fim = () => {
-      if (currentAudio === audio) { currentAudio = null; speakingEnded(); }
-      URL.revokeObjectURL(url);
-    };
-    audio.addEventListener('ended', fim);
-    audio.addEventListener('error', () => { fim(); speakWithSystem(fala); });
-    audio.play().catch(() => { fim(); speakWithSystem(fala); });
+  if (button) { button.classList.add('is-busy'); button.textContent = 'Gerando…'; }
+  const engine = settings?.tts?.engine || 'neural';
+  const restaurar = () => { if (button) { button.classList.remove('is-busy'); button.textContent = 'Ouvir amostra'; } };
+  if (engine === 'system') { speakWithSystem(fala, restaurar); return; }
+  const r = await window.api.ttsSpeak(fala, '');
+  restaurar();
+  if (!r.ok || !r.audio) {
+    if (r.fallback && r.message && !warnedFallback) { warnedFallback = true; toast(r.message); }
+    speakWithSystem(fala);
     return;
   }
-  if (r.fallback && r.message && !warnedFallback) {
-    warnedFallback = true;
-    toast(r.message);
-  }
-  speakWithSystem(fala);
+  const url = URL.createObjectURL(new Blob([r.audio], { type: r.mimeType || 'audio/wav' }));
+  const audio = new Audio(url);
+  currentAudio = audio;
+  $('chat-mute').hidden = false;
+  const fim = () => { URL.revokeObjectURL(url); if (currentAudio === audio) { currentAudio = null; $('chat-mute').hidden = true; } };
+  audio.addEventListener('ended', fim);
+  audio.addEventListener('error', fim);
+  audio.play().catch(fim);
 }
 
-function stopSpeaking() {
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+/** Para tudo o que estiver falando — menos `keep`, quando um player acabou de começar. */
+function stopSpeaking({ keep = null } = {}) {
+  if (currentAudio && currentAudio !== keep) { currentAudio.pause(); currentAudio = null; }
+  if (currentJob) { currentJob.queue.forEach((u) => URL.revokeObjectURL(u)); currentJob.queue = []; currentJob = null; }
   if ('speechSynthesis' in window) speechSynthesis.cancel();
-  speakingEnded();
+  $('chat-mute').hidden = Boolean(!keep);
 }
 
 async function startClip() {
@@ -1272,7 +1403,7 @@ if ('speechSynthesis' in window) {
 }
 $('set-tts-rate').addEventListener('change', () => saveTts({ rate: $('set-tts-rate').value }));
 $('set-tts-sample').addEventListener('click', () => {
-  speak('Olá! Na última reunião ficou combinado repetir o teste de onboarding na quinta. Quer que eu crie a tarefa?');
+  speak('Olá! Na última reunião ficou combinado repetir o teste de onboarding na quinta. Quer que eu crie a tarefa?', $('set-tts-sample'));
 });
 $('set-tts-ref-pick').addEventListener('click', async () => {
   const file = await window.api.pickVoiceRef();

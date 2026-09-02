@@ -221,6 +221,13 @@ class Speaker:
         sf.write(str(path), wav.squeeze(0).detach().cpu().numpy(), self.model.sr, subtype="PCM_16")
 
 
+def chunk_emitter(req_id):
+    """Callback que anuncia cada frase pronta, amarrado ao id do pedido."""
+    def on_chunk(index: int, total: int, path: Path) -> None:
+        emit({"id": req_id, "event": "chunk", "index": index, "total": total, "out": str(path)})
+    return on_chunk
+
+
 def serve(speaker: Speaker) -> None:
     emit({
         "event": "ready",
@@ -237,15 +244,11 @@ def serve(speaker: Speaker) -> None:
         except json.JSONDecodeError:
             emit({"ok": False, "message": "pedido não é JSON"})
             continue
-        req_id = req.get("id")
         try:
-            def on_chunk(index, total, path):
-                emit({"id": req_id, "event": "chunk", "index": index, "total": total, "out": str(path)})
-
             seconds = speaker.speak(
                 req["text"], Path(req["out"]), req.get("ref") or None,
                 float(req.get("exaggeration", 0.5)), float(req.get("cfg", 0.5)),
-                on_chunk=on_chunk,
+                on_chunk=chunk_emitter(req.get("id")),
             )
             emit({"id": req.get("id"), "ok": True, "out": req["out"], "seconds": round(seconds, 1)})
         except Exception as err:  # noqa: BLE001 — o worker não pode morrer por um pedido

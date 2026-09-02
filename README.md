@@ -114,15 +114,41 @@ faz o `git pull`, reinstala dependências se elas mudaram e reabre o app.
 O chat lê as respostas com vozes neurais do Edge (online) ou com a voz do
 sistema (offline, sem entonação). Há um terceiro motor, **Chatterbox
 Multilingual V3 pt-BR** (Resemble AI, MIT): prosódia natural e clonagem de
-voz, **offline**, 0,5B parâmetros. Ele roda na CPU (o PyTorch não usa GPU AMD
-no Windows), e isso pesa: num Ryzen 7 5700X, **~26 s para carregar** (uma
-vez, ~4 GB de RAM) e **~7 s de espera por segundo de fala** com a voz padrão
-— uma resposta de duas frases leva quase um minuto. Com **voz de referência**
-(clonagem) o custo por segundo de fala mais que dobra (~20 s), porque o
-modelo passa a condicionar em mais contexto; a análise do áudio de referência
-em si é feita uma vez e reaproveitada. Com GPU NVIDIA ele fica perto do tempo
-real. Como fixa versões próprias de torch e transformers, vive num ambiente à
-parte:
+voz, **offline**, 0,5B parâmetros. É um modelo PyTorch, então não usa o
+Vulkan do whisper.cpp; a GPU entra por CUDA (NVIDIA) ou **ROCm (AMD)**. Como
+fixa versões próprias de torch e transformers, vive num ambiente à parte. O
+app prefere `.venv-tts-gpu` quando existe e cai para `.venv-tts` (CPU).
+
+**Com Radeon (ROCm no Windows)** — a AMD dá suporte oficial a PyTorch no
+Windows para RX 9060 XT, 9070/9070 XT, 7900 XTX, 7700 e as PRO
+correspondentes. Exige **Python 3.12** e driver Adrenalin 26.2.2 ou mais novo:
+
+```powershell
+winget install --id Python.Python.3.12 --exact
+py -3.12 -m venv .venv-tts-gpu
+.venv-tts-gpu\Scripts\python -m pip install --no-cache-dir `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_core-7.2.1-py3-none-win_amd64.whl `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_devel-7.2.1-py3-none-win_amd64.whl `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm_sdk_libraries_custom-7.2.1-py3-none-win_amd64.whl `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/rocm-7.2.1.tar.gz
+.venv-tts-gpu\Scripts\python -m pip install --no-cache-dir `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torch-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchaudio-2.9.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl `
+  https://repo.radeon.com/rocm/windows/rocm-rel-7.2.1/torchvision-0.24.1%2Brocm7.2.1-cp312-cp312-win_amd64.whl
+.venv-tts-gpu\Scripts\python -c "import torch; print(torch.cuda.get_device_name(0))"   # deve imprimir a placa
+.venv-tts-gpu\Scripts\python -m pip install --no-deps "git+https://github.com/resemble-ai/chatterbox.git"
+.venv-tts-gpu\Scripts\python -m pip install "numpy<2" "librosa==0.11.0" s3tokenizer "transformers==5.2.0" "diffusers==0.29.0" "git+https://github.com/resemble-ai/Perth.git" "conformer==0.3.2" "safetensors==0.5.3" spacy-pkuseg "pykakasi==2.3.0" pyloudnorm omegaconf huggingface_hub
+.venv-tts-gpu\Scripts\python -m meeting_processor.tts_chatterbox --model-dir .models\chatterbox-pt-br --download
+```
+
+O Chatterbox entra com `--no-deps` porque seus metadados fixam o torch 2.6 de
+CPU; as dependências vão em seguida, e o torch ROCm fica. Medido numa **RX
+9060 XT**: ~29 s para carregar, **~5 s de espera por segundo de fala** (voz
+padrão ou clonada, depois da primeira frase) — o ROCm no Windows ainda usa
+kernels genéricos para a RDNA4, então não chega ao tempo real, mas é 3 a 5×
+a CPU.
+
+**Só CPU** (qualquer máquina, Python 3.11 ou 3.12):
 
 ```powershell
 python -m venv .venv-tts
@@ -130,8 +156,10 @@ python -m venv .venv-tts
 .venv-tts\Scripts\python -m meeting_processor.tts_chatterbox --model-dir .models\chatterbox-pt-br --download
 ```
 
-(O pacote do PyPI, `chatterbox-tts` 0.1.7, ainda é o V2 e não carrega o pack
-pt-BR; por isso a instalação vem do GitHub.)
+Num Ryzen 7 5700X: ~26 s para carregar (~4 GB de RAM) e **~7 s de espera por
+segundo de fala** com a voz padrão, ~20 s com voz clonada. (O pacote do PyPI,
+`chatterbox-tts` 0.1.7, ainda é o V2 e não carrega o pack pt-BR; por isso a
+instalação vem do GitHub.)
 
 O download é de ~3,2 GB, em `.models/chatterbox-pt-br/` (fora do repositório).
 Depois, **Configurações → Voz do assistente → Chatterbox**. Um áudio seu de

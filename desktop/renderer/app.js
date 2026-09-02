@@ -1215,7 +1215,7 @@ async function renderTtsSettings() {
         : cbStatus.message || 'Chatterbox não instalado')
       : 'voz instalada no Windows: instantânea, sem entonação, offline';
   $('set-tts-sample-desc').textContent = cb
-    ? 'na CPU: ~26 s na primeira vez (carga) e ~7 s por segundo de fala'
+    ? 'a primeira vez carrega o modelo (~30 s); depois, alguns segundos por frase'
     : 'ouça o motor e a voz escolhidos';
 
   $('set-tts-voice-row').hidden = cb;

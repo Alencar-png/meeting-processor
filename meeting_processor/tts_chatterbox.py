@@ -180,7 +180,7 @@ class Speaker:
         exaggeration: float = 0.5,
         cfg: float = 0.5,
     ) -> float:
-        import torchaudio
+        import soundfile as sf
 
         t0 = time.time()
         # Analisar o áudio de referência custa dezenas de segundos em CPU; com
@@ -199,7 +199,9 @@ class Speaker:
                 chunk, language_id="pt", exaggeration=exaggeration, cfg_weight=cfg,
             ))
         wav = self.torch.cat(partes, dim=-1) if len(partes) > 1 else partes[0]
-        torchaudio.save(str(out), wav, self.model.sr)
+        # soundfile em vez de torchaudio.save: a partir do torchaudio 2.9,
+        # gravar exige o torchcodec, e o WAV aqui é só PCM.
+        sf.write(str(out), wav.squeeze(0).detach().cpu().numpy(), self.model.sr, subtype="PCM_16")
         return time.time() - t0
 
 

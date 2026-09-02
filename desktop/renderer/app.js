@@ -755,6 +755,22 @@ function messageBox(msg) {
   bubble.className = 'bubble';
   renderRichText(bubble, msg.text);
   box.append(bubble);
+  if (msg.role === 'ai' && msg.text && !msg.error) {
+    // Ler esta resposta em voz alta — de novo, ou só ela, sem ligar o modo Voz.
+    const acoes = document.createElement('div');
+    acoes.className = 'msg-actions';
+    const falar = document.createElement('button');
+    falar.type = 'button';
+    falar.className = 'msg-speak';
+    falar.title = 'Ler em voz alta';
+    falar.textContent = '🔊';
+    falar.addEventListener('click', () => {
+      if (speakingButton === falar) stopSpeaking();
+      else speak(msg.text, falar);
+    });
+    acoes.append(falar);
+    box.append(acoes);
+  }
   return box;
 }
 
@@ -900,19 +916,39 @@ function speakable(text) {
 
 let currentAudio = null;      // a fala neural em reprodução
 let warnedFallback = false;   // avisa uma vez por sessão que caiu para a voz do sistema
+let speakingButton = null;    // o 🔊 da mensagem que está sendo lida, se foi por ele
 
-/** A voz do sistema: offline, sem prosódia — o plano B. */
+/** Marca (ou desmarca) o botão da mensagem em leitura. */
+function setSpeakingButton(btn) {
+  if (speakingButton) { speakingButton.classList.remove('is-speaking'); speakingButton.textContent = '🔊'; speakingButton.title = 'Ler em voz alta'; }
+  speakingButton = btn || null;
+  if (speakingButton) { speakingButton.classList.add('is-speaking'); speakingButton.textContent = '⏹'; speakingButton.title = 'Parar a leitura'; }
+}
+
+function speakingStarted() { $('chat-mute').hidden = false; }
+function speakingEnded() { $('chat-mute').hidden = true; setSpeakingButton(null); }
+
+/** "+5%" → 1.05: a voz do sistema fala em multiplicador. */
+function systemRate() {
+  const pct = Number(String(settings?.tts?.rate || '+0%').replace('%', ''));
+  return Number.isFinite(pct) ? Math.min(2, Math.max(0.5, 1 + pct / 100)) : 1;
+}
+
+/** A voz do sistema: offline, sem prosódia — o plano B, ou a escolha de quem prefere. */
 function speakWithSystem(fala) {
-  if (!('speechSynthesis' in window)) return;
+  if (!('speechSynthesis' in window)) { speakingEnded(); return; }
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(fala);
   u.lang = 'pt-BR';
-  const voz = pickVoice();
+  const escolhida = settings?.tts?.systemVoice
+    ? speechSynthesis.getVoices().find((v) => v.name === settings.tts.systemVoice)
+    : null;
+  const voz = escolhida || pickVoice();
   if (voz) u.voice = voz;
-  u.rate = 1.05;
-  u.onstart = () => { $('chat-mute').hidden = false; };
-  u.onend = () => { $('chat-mute').hidden = true; };
-  u.onerror = () => { $('chat-mute').hidden = true; };
+  u.rate = systemRate();
+  u.onstart = speakingStarted;
+  u.onend = speakingEnded;
+  u.onerror = speakingEnded;
   speechSynthesis.speak(u);
 }
 
@@ -920,19 +956,23 @@ function speakWithSystem(fala) {
  * Lê a resposta. Primeiro a voz neural (Edge, via Python do app); se ela não
  * vier — sem internet, sem o pacote, motor desligado — a voz do sistema lê.
  */
-async function speak(text) {
+async function speak(text, button = null) {
   const fala = speakable(text);
   if (!fala) return;
   stopSpeaking();
+  setSpeakingButton(button);
+  if (button) button.classList.add('is-busy');
   const r = await window.api.ttsSpeak(fala);
+  if (button) button.classList.remove('is-busy');
+  if (speakingButton !== button) return;   // a pessoa pediu outra coisa nesse meio-tempo
   if (r.ok && r.audio) {
     const blob = new Blob([r.audio], { type: r.mimeType || 'audio/mpeg' });
     const url = URL.createObjectURL(blob);
     const audio = new Audio(url);
     currentAudio = audio;
-    $('chat-mute').hidden = false;
+    speakingStarted();
     const fim = () => {
-      if (currentAudio === audio) { currentAudio = null; $('chat-mute').hidden = true; }
+      if (currentAudio === audio) { currentAudio = null; speakingEnded(); }
       URL.revokeObjectURL(url);
     };
     audio.addEventListener('ended', fim);
@@ -950,7 +990,7 @@ async function speak(text) {
 function stopSpeaking() {
   if (currentAudio) { currentAudio.pause(); currentAudio = null; }
   if ('speechSynthesis' in window) speechSynthesis.cancel();
-  $('chat-mute').hidden = true;
+  speakingEnded();
 }
 
 async function startClip() {
@@ -1156,13 +1196,26 @@ async function renderTtsSettings() {
     ? 'vozes neurais do Edge — entonação natural, precisa de internet'
     : 'voz instalada no sistema — funciona sem internet';
   const voz = $('set-tts-voice');
-  voz.replaceChildren(...ttsOptions.voices.map((v) => new Option(v.label, v.id)));
-  voz.value = cfg.voice;
+  if (neural) {
+    voz.replaceChildren(...ttsOptions.voices.map((v) => new Option(v.label, v.id)));
+    voz.value = cfg.voice;
+  } else {
+    // As vozes instaladas no sistema, português primeiro.
+    const instaladas = ('speechSynthesis' in window ? speechSynthesis.getVoices() : [])
+      .slice()
+      .sort((x, y) => (/^pt/i.test(y.lang) - /^pt/i.test(x.lang)) || x.name.localeCompare(y.name));
+    voz.replaceChildren(
+      new Option('automática (melhor voz em português)', ''),
+      ...instaladas.map((v) => new Option(`${v.name.replace(/^Microsoft /, '')} · ${v.lang}`, v.name)),
+    );
+    voz.value = instaladas.some((v) => v.name === cfg.systemVoice) ? cfg.systemVoice : '';
+  }
+  $('set-tts-voice-desc').textContent = neural
+    ? 'voz neural em português do Brasil'
+    : 'voz instalada no Windows (Configurações → Hora e idioma → Fala para instalar outras)';
   const rate = $('set-tts-rate');
   rate.replaceChildren(...ttsOptions.rates.map((r) => new Option(r.label, r.id)));
   rate.value = cfg.rate;
-  $('set-tts-voice-row').hidden = !neural;
-  $('set-tts-rate-row').hidden = !neural;
 }
 
 async function saveTts(patch) {
@@ -1174,7 +1227,15 @@ $('set-tts-engine').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-engine]');
   if (b) saveTts({ engine: b.dataset.engine });
 });
-$('set-tts-voice').addEventListener('change', () => saveTts({ voice: $('set-tts-voice').value }));
+$('set-tts-voice').addEventListener('change', () => {
+  const valor = $('set-tts-voice').value;
+  saveTts(settings.tts?.engine === 'system' ? { systemVoice: valor } : { voice: valor });
+});
+if ('speechSynthesis' in window) {
+  // A lista de vozes do sistema chega depois do carregamento; se a tela já
+  // estiver aberta em Configurações, redesenha.
+  speechSynthesis.addEventListener('voiceschanged', () => { if (view === 'settings') renderTtsSettings(); });
+}
 $('set-tts-rate').addEventListener('change', () => saveTts({ rate: $('set-tts-rate').value }));
 $('set-tts-sample').addEventListener('click', () => {
   speak('Olá! Na última reunião ficou combinado repetir o teste de onboarding na quinta. Quer que eu crie a tarefa?');

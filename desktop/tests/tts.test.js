@@ -13,7 +13,7 @@ const path = require('node:path');
 const { after, before, test } = require('node:test');
 
 const {
-  DEFAULT_TTS, RATES, VOICES, buildEdgeTtsArgs, isModuleMissing, normalizeTts, synthesize,
+  DEFAULT_TTS, RATES, VOICES, buildEdgeTtsArgs, isModuleMissing, normalizeTts, rateToMultiplier, synthesize,
 } = require('../tts');
 
 let tmp;
@@ -23,10 +23,20 @@ after(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 test('normalizeTts completa e recusa voz ou velocidade desconhecida', () => {
   assert.deepStrictEqual(normalizeTts(undefined), DEFAULT_TTS);
   assert.deepStrictEqual(normalizeTts({ engine: 'system' }), { ...DEFAULT_TTS, engine: 'system' });
-  assert.deepStrictEqual(normalizeTts({ voice: 'pt-BR-AntonioNeural', rate: '+15%' }), { engine: 'neural', voice: 'pt-BR-AntonioNeural', rate: '+15%' });
+  assert.deepStrictEqual(normalizeTts({ voice: 'pt-BR-AntonioNeural', rate: '+15%' }), { ...DEFAULT_TTS, voice: 'pt-BR-AntonioNeural', rate: '+15%' });
   assert.deepStrictEqual(normalizeTts({ engine: 'robô', voice: 'inventada', rate: '+300%' }), DEFAULT_TTS);
+  assert.strictEqual(normalizeTts({ systemVoice: 'Microsoft Maria Desktop' }).systemVoice, 'Microsoft Maria Desktop');
+  assert.strictEqual(normalizeTts({ systemVoice: 42 }).systemVoice, '');
   assert.ok(VOICES.some((v) => v.id === DEFAULT_TTS.voice));
   assert.ok(RATES.some((r) => r.id === DEFAULT_TTS.rate));
+});
+
+test('rateToMultiplier traduz o percentual para a voz do sistema', () => {
+  assert.strictEqual(rateToMultiplier('+5%'), 1.05);
+  assert.strictEqual(rateToMultiplier('-10%'), 0.9);
+  assert.strictEqual(rateToMultiplier('+0%'), 1);
+  assert.strictEqual(rateToMultiplier('lixo'), 1);
+  assert.strictEqual(rateToMultiplier('+500%'), 2);
 });
 
 test('o texto vai por arquivo, não por argumento', () => {

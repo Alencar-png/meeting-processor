@@ -33,7 +33,9 @@ const RATES = [
   { id: '+25%', label: 'bem mais rápido' },
 ];
 
-const DEFAULT_TTS = Object.freeze({ engine: 'neural', voice: VOICES[0].id, rate: '+5%' });
+// `systemVoice` é o nome de uma voz instalada no sistema (a lista vem do
+// renderer, que é quem enxerga o speechSynthesis); vazio = a melhor pt-BR.
+const DEFAULT_TTS = Object.freeze({ engine: 'neural', voice: VOICES[0].id, rate: '+5%', systemVoice: '' });
 
 /** Completa o que falta e recusa voz ou velocidade que não existem. */
 function normalizeTts(raw) {
@@ -42,7 +44,14 @@ function normalizeTts(raw) {
   if (raw.engine === 'system' || raw.engine === 'neural') tts.engine = raw.engine;
   if (VOICES.some((v) => v.id === raw.voice)) tts.voice = raw.voice;
   if (RATES.some((r) => r.id === raw.rate)) tts.rate = raw.rate;
+  if (typeof raw.systemVoice === 'string') tts.systemVoice = raw.systemVoice.slice(0, 120);
   return tts;
+}
+
+/** "+5%" → 1.05, para a voz do sistema, que fala em multiplicador. */
+function rateToMultiplier(rate) {
+  const pct = Number(String(rate || '+0%').replace('%', ''));
+  return Number.isFinite(pct) ? Math.min(2, Math.max(0.5, 1 + pct / 100)) : 1;
 }
 
 function buildEdgeTtsArgs({ textFile, voice, rate, outFile }) {
@@ -98,5 +107,6 @@ module.exports = {
   buildEdgeTtsArgs,
   isModuleMissing,
   normalizeTts,
+  rateToMultiplier,
   synthesize,
 };

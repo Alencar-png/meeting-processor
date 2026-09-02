@@ -28,7 +28,7 @@
     model: 'large-v3',
     language: 'pt',
     steps: { kanban: true, documento: true },
-    tts: { engine: 'system', voice: 'pt-BR-FranciscaNeural', rate: '+5%' },
+    tts: { engine: 'system', voice: 'pt-BR-FranciscaNeural', rate: '+5%', systemVoice: '' },
   };
 
   let seq = 100;

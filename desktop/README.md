@@ -147,7 +147,9 @@ A leitura usa, por padrão, as **vozes neurais do Edge** (`tts.js` chama o
 entonação de fala de verdade — gratuito, sem chave, precisa de internet na
 hora). Sem internet ou sem o pacote, o renderer cai para a voz do sistema
 (`speechSynthesis`, offline) e avisa uma vez. Motor, voz e velocidade ficam em
-**Configurações → Voz do assistente**, com botão de amostra. A Anthropic não
+**Configurações → Voz do assistente**, com botão de amostra — no motor do
+sistema, a lista é a das vozes instaladas no Windows. Cada resposta do
+assistente tem um 🔊 para ser lida sozinha, com ou sem o modo Voz. A Anthropic não
 expõe a voz do Claude como API e o modo de voz do Claude Code é só entrada, na
 interface interativa — por isso a saída de voz é esta.
 

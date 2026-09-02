@@ -28,6 +28,7 @@
     model: 'large-v3',
     language: 'pt',
     steps: { kanban: true, documento: true },
+    tts: { engine: 'system', voice: 'pt-BR-FranciscaNeural', rate: '+5%' },
   };
 
   let seq = 100;
@@ -348,5 +349,16 @@
       return { ok: true };
     },
     async pickWorkdir() { return 'C:\\Users\\voce\\code\\projeto'; },
+    async ttsSpeak() { return { ok: false, fallback: true, message: '' }; },
+    async ttsOptions() {
+      return {
+        voices: [{ id: 'pt-BR-FranciscaNeural', label: 'Francisca — feminina, natural' }, { id: 'pt-BR-AntonioNeural', label: 'Antônio — masculina, natural' }],
+        rates: [{ id: '+0%', label: 'normal' }, { id: '+5%', label: 'um pouco mais rápido' }],
+      };
+    },
+    async chatTranscribe() {
+      await new Promise((r) => setTimeout(r, 900));
+      return { ok: true, text: 'O que ficou decidido na última reunião?' };
+    },
   };
 })();

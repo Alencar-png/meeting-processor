@@ -89,6 +89,9 @@ contextBridge.exposeInMainWorld('api', {
   chatStop: () => ipcRenderer.invoke('chat:stop'),
   chatClear: (projectId) => ipcRenderer.invoke('chat:clear', projectId),
   chatSetBypass: (payload) => ipcRenderer.invoke('chat:setBypass', payload),
+  chatTranscribe: (payload) => ipcRenderer.invoke('chat:transcribe', payload),
+  ttsSpeak: (text) => ipcRenderer.invoke('tts:speak', { text }),
+  ttsOptions: () => ipcRenderer.invoke('tts:options'),
   pickWorkdir: () => ipcRenderer.invoke('dialog:pickWorkdir'),
 
   // --- Sistema ---

@@ -859,6 +859,22 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
   background: var(--bg-raised);
 }
 .chat-input { flex: 1; min-width: 0; }
+
+/* Microfone: cinza parado, vermelho pulsando enquanto grava, apagado enquanto transcreve. */
+.chat-bar .icon-btn { width: 38px; height: 38px; flex: none; font-size: 15px; border-radius: var(--radius-sm); }
+.chat-mic.is-recording {
+  color: var(--red);
+  border-color: var(--red);
+  box-shadow: 0 0 0 4px rgba(251, 113, 133, 0.18);
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+.chat-mic.is-busy { opacity: 0.5; pointer-events: none; }
+@keyframes mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(251, 113, 133, 0.14); }
+  50%      { box-shadow: 0 0 0 7px rgba(251, 113, 133, 0.3); }
+}
+@media (prefers-reduced-motion: reduce) { .chat-mic.is-recording { animation: none; } }
+#chat-mute { color: var(--cyan); border-color: var(--cyan-dim); }
 .chat-empty { margin: auto; text-align: center; color: var(--muted-dim); font-size: 13px; max-width: 340px; }
 
 /* ===== Biblioteca ===== */

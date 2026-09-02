@@ -14,6 +14,7 @@ const {
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const {
@@ -45,6 +46,8 @@ const { readFileTolerant, unlinkTolerant } = require('./unicode-path');
 const promptsStore = require('./prompts-store');
 const { createUpdater } = require('./updater');
 const chatMessages = require('./chat-messages');
+const voice = require('./voice');
+const tts = require('./tts');
 const {
   buildChatArgs, buildChatSystemPrompt, describeChatEvent, isMissingSession,
 } = require('./project-chat');
@@ -69,6 +72,8 @@ const DEFAULT_SETTINGS = {
   formats: ['md', 'txt'],
   // O que roda depois da transcrição; cada etapa liga e desliga sozinha.
   steps: { ...DEFAULT_STEPS },
+  // A voz do assistente no chat: neural (Edge, online) ou a do sistema.
+  tts: { ...tts.DEFAULT_TTS },
 };
 
 let mainWindow = null;
@@ -94,7 +99,7 @@ function loadSettings() {
     const raw = fs.readFileSync(settingsPath(), 'utf-8');
     const saved = JSON.parse(raw);
     // Uma etapa nova entra ligada mesmo em configurações gravadas antes dela.
-    return { ...DEFAULT_SETTINGS, ...saved, steps: normalizeSteps(saved.steps) };
+    return { ...DEFAULT_SETTINGS, ...saved, steps: normalizeSteps(saved.steps), tts: tts.normalizeTts(saved.tts) };
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -1091,6 +1096,57 @@ ipcMain.handle('chat:clear', (_e, projectId) => {
 });
 ipcMain.handle('chat:setBypass', (_e, { projectId, enabled }) =>
   projects.setChatBypass(outDir(), projectId, Boolean(enabled)));
+
+/**
+ * A resposta vira áudio com a voz neural. Falha devolve `fallback: true` e o
+ * renderer lê com a voz do sistema — a conversa não para por falta de internet.
+ */
+ipcMain.handle('tts:speak', (_e, { text }) => {
+  const settings = loadSettings();
+  if (settings.tts.engine !== 'neural') return { ok: false, fallback: true, message: '' };
+  const native = nativeStatus(PROJECT_ROOT);
+  return tts.synthesize({
+    text,
+    voice: settings.tts.voice,
+    rate: settings.tts.rate,
+    python: native.python || 'python',
+    run,
+    tmpDir: app.getPath('temp'),
+  });
+});
+ipcMain.handle('tts:options', () => ({ voices: tts.VOICES, rates: tts.RATES }));
+
+/**
+ * Recado de voz do chat vira texto — com o mesmo whisper.cpp das reuniões,
+ * na GPU. Precisa do motor nativo; o container não compensa para dez
+ * segundos de áudio.
+ */
+ipcMain.handle('chat:transcribe', async (_e, { audio, mimeType = 'audio/webm' }) => {
+  if (!audio || !audio.byteLength) return { ok: false, message: 'O recado saiu vazio.' };
+  const settings = loadSettings();
+  const native = nativeStatus(PROJECT_ROOT);
+  const modelPath = settings.nativeModel || native.models[0]?.path;
+  if (!native.cli || !modelPath) {
+    return { ok: false, message: 'Falar com o chat precisa do motor GPU (whisper.cpp) — veja Configurações.' };
+  }
+  const ext = mimeType.includes('ogg') ? 'ogg' : 'webm';
+  const clipPath = path.join(app.getPath('temp'), `synapse-recado-${Date.now()}.${ext}`);
+  fs.writeFileSync(clipPath, Buffer.from(audio));
+  try {
+    return await voice.transcribeClip({
+      clipPath,
+      cli: native.cli,
+      modelPath,
+      vadModel: voice.findVadModel(PROJECT_ROOT),
+      language: settings.language,
+      threads: os.cpus().length,
+      run,
+      tmpDir: app.getPath('temp'),
+    });
+  } finally {
+    try { fs.unlinkSync(clipPath); } catch { /* já removido */ }
+  }
+});
 
 ipcMain.handle('dialog:pickWorkdir', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {

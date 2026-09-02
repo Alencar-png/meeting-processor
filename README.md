@@ -32,7 +32,9 @@ documentos, um texto de contexto que orienta o tom do que é gerado — e um
 **pasta de trabalho** (um repositório, uma pasta de documentos): o app cria
 `synapse/` lá dentro e passa a guardar as reuniões do projeto nela, e o chat
 passa a trabalhar nessa pasta. Ligue o **modo autônomo** e ele age na máquina
-sem pedir a cada passo; desligado, só lê e pesquisa.
+sem pedir a cada passo; desligado, só lê e pesquisa. Dá para **falar** com ele:
+o microfone do chat transcreve na GPU e, com o modo Voz ligado, a resposta é
+lida em voz alta com uma voz neural (ou a do sistema, offline).
 
 ---
 
@@ -188,6 +190,8 @@ desktop/                   # app Electron (Synapse) — veja desktop/README.md
 ├── updater.js             # atualização pelo app: git pull + reinstalar o que mudou
 ├── project-chat.js        # o chat: argumentos do claude -p, system prompt do projeto, eventos
 ├── chat-messages.js       # histórico do chat por projeto (synapse.db)
+├── voice.js               # recado de voz do chat → texto (whisper.cpp local)
+├── tts.js                 # resposta → fala com voz neural (edge-tts), sistema como fallback
 ├── unicode-path.js        # caminhos com acento nas duas formas do Unicode
 ├── prompts/               # prompts de extração e documentos, fora do código
 └── renderer/              # interface

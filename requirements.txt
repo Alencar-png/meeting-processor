@@ -9,6 +9,7 @@
 pydantic>=2.0,<3.0
 pyyaml>=6.0,<7.0
 python-dotenv>=1.0,<2.0
+edge-tts>=7.0,<8.0
 
 # Transcrição local com openai-whisper (pesado, ~2-3 GB).
 # Dispensável se você usar whisper.cpp, que é o caminho do app desktop.

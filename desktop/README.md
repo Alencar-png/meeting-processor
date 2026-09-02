@@ -137,6 +137,20 @@ mensagens e entre aberturas do app pela sessão do próprio Claude Code
 (`--session-id` na primeira, `--resume` depois); se a sessão sumiu, o app abre
 outra e segue. O que a tela mostra fica em `chat_messages`, no `synapse.db`.
 
+**Voz.** O microfone na barra do chat grava um recado, o mesmo whisper.cpp das
+reuniões o transcreve na GPU (`voice.js`, com VAD e sem tokens não-fala) e o
+texto entra na caixa. Com o interruptor **Voz** ligado, o recado vai direto
+como mensagem e a resposta é lida em voz alta; 🔇 interrompe a leitura.
+
+A leitura usa, por padrão, as **vozes neurais do Edge** (`tts.js` chama o
+`edge-tts` no Python do app: pt-BR Francisca, Antônio ou Thalita, com
+entonação de fala de verdade — gratuito, sem chave, precisa de internet na
+hora). Sem internet ou sem o pacote, o renderer cai para a voz do sistema
+(`speechSynthesis`, offline) e avisa uma vez. Motor, voz e velocidade ficam em
+**Configurações → Voz do assistente**, com botão de amostra. A Anthropic não
+expõe a voz do Claude como API e o modo de voz do Claude Code é só entrada, na
+interface interativa — por isso a saída de voz é esta.
+
 Dois modos, por projeto, no alto do chat:
 
 - **Leitura** (padrão): `--permission-mode dontAsk` com `Read, Glob, Grep,
@@ -193,6 +207,8 @@ desktop/
 ├── updater.js           # Configurações → Sobre: git pull --ff-only, npm/pip se mudaram, relaunch
 ├── project-chat.js      # chat do projeto: system prompt, args do claude -p, tradução do stream
 ├── chat-messages.js     # histórico do chat (tabela chat_messages)
+├── voice.js             # recado de voz → texto, com o whisper.cpp das reuniões
+├── tts.js               # resposta → áudio com a voz neural do Edge (edge-tts)
 ├── transcript-import.js # texto e legenda viram reunião (.txt .md .srt .vtt)
 ├── library.js           # a pasta de saída lida como biblioteca (CRUD)
 ├── db.js                # banco do workspace (SQLite) e migração dos JSONs

@@ -776,6 +776,7 @@ async function renderChat() {
   const p = projectById(currentProjectId);
   if (!p) return;
   renderChatTools(p);
+  $('chat-voice').checked = voiceMode;
 
   const thread = $('chat-thread');
   thread.replaceChildren();
@@ -840,6 +841,7 @@ window.api.on('chat:event', (ev) => {
       const nome = projectById(ev.projectId)?.name || 'projeto';
       toast(`O assistente respondeu em <strong>${nome}</strong>.`);
     }
+    if (voiceMode && ev.ok && ev.text) speak(ev.text);
     return;
   }
   if (!live) return;
@@ -855,6 +857,170 @@ window.api.on('chat:event', (ev) => {
 });
 
 $('chat-stop').addEventListener('click', () => window.api.chatStop());
+
+// --- Chat por voz -----------------------------------------------------------------
+
+/**
+ * Falar com o projeto. O recado é gravado do microfone, transcrito pelo mesmo
+ * whisper das reuniões (na GPU, em segundos) e vira mensagem. Com o modo Voz
+ * ligado, vai direto e a resposta é lida em voz alta pela síntese do sistema
+ * — pt-BR do Windows, offline. Desligado, o microfone só preenche a caixa.
+ */
+let voiceMode = false;
+let clipRecorder = null;
+let clipStream = null;
+let clipChunks = [];
+
+// As vozes carregam de forma assíncrona; pedir cedo evita lista vazia na hora.
+if ('speechSynthesis' in window) {
+  speechSynthesis.getVoices();
+  speechSynthesis.addEventListener('voiceschanged', () => speechSynthesis.getVoices());
+}
+
+function pickVoice() {
+  const voices = speechSynthesis.getVoices();
+  return voices.find((v) => /pt[-_]BR/i.test(v.lang) && /natural|online/i.test(v.name))
+    || voices.find((v) => /pt[-_]BR/i.test(v.lang))
+    || voices.find((v) => /^pt/i.test(v.lang))
+    || null;
+}
+
+/** Texto para ler: sem marcação, sem código, sem URL — só o que faz sentido ouvir. */
+function speakable(text) {
+  return String(text || '')
+    .replace(/```[\s\S]*?```/g, ' código omitido. ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*•]\s+/gm, '')
+    .replace(/https?:\/\/\S+/g, 'link')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+let currentAudio = null;      // a fala neural em reprodução
+let warnedFallback = false;   // avisa uma vez por sessão que caiu para a voz do sistema
+
+/** A voz do sistema: offline, sem prosódia — o plano B. */
+function speakWithSystem(fala) {
+  if (!('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(fala);
+  u.lang = 'pt-BR';
+  const voz = pickVoice();
+  if (voz) u.voice = voz;
+  u.rate = 1.05;
+  u.onstart = () => { $('chat-mute').hidden = false; };
+  u.onend = () => { $('chat-mute').hidden = true; };
+  u.onerror = () => { $('chat-mute').hidden = true; };
+  speechSynthesis.speak(u);
+}
+
+/**
+ * Lê a resposta. Primeiro a voz neural (Edge, via Python do app); se ela não
+ * vier — sem internet, sem o pacote, motor desligado — a voz do sistema lê.
+ */
+async function speak(text) {
+  const fala = speakable(text);
+  if (!fala) return;
+  stopSpeaking();
+  const r = await window.api.ttsSpeak(fala);
+  if (r.ok && r.audio) {
+    const blob = new Blob([r.audio], { type: r.mimeType || 'audio/mpeg' });
+    const url = URL.createObjectURL(blob);
+    const audio = new Audio(url);
+    currentAudio = audio;
+    $('chat-mute').hidden = false;
+    const fim = () => {
+      if (currentAudio === audio) { currentAudio = null; $('chat-mute').hidden = true; }
+      URL.revokeObjectURL(url);
+    };
+    audio.addEventListener('ended', fim);
+    audio.addEventListener('error', () => { fim(); speakWithSystem(fala); });
+    audio.play().catch(() => { fim(); speakWithSystem(fala); });
+    return;
+  }
+  if (r.fallback && r.message && !warnedFallback) {
+    warnedFallback = true;
+    toast(r.message);
+  }
+  speakWithSystem(fala);
+}
+
+function stopSpeaking() {
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  $('chat-mute').hidden = true;
+}
+
+async function startClip() {
+  clipStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  clipChunks = [];
+  clipRecorder = new MediaRecorder(clipStream, { mimeType: 'audio/webm;codecs=opus' });
+  clipRecorder.addEventListener('dataavailable', (e) => { if (e.data.size) clipChunks.push(e.data); });
+  clipRecorder.start(250);
+  stopSpeaking();
+  $('chat-mic').classList.add('is-recording');
+  $('chat-mic').title = 'Parar e enviar';
+  $('chat-input').placeholder = 'Gravando… clique no microfone quando terminar';
+}
+
+function stopClip() {
+  return new Promise((resolve) => {
+    const recorder = clipRecorder;
+    clipRecorder = null;
+    if (!recorder || recorder.state === 'inactive') { resolve(null); return; }
+    recorder.addEventListener('stop', () => {
+      clipStream?.getTracks().forEach((t) => t.stop());
+      clipStream = null;
+      resolve(new Blob(clipChunks, { type: 'audio/webm' }));
+    });
+    recorder.stop();
+  });
+}
+
+const CHAT_PLACEHOLDER = $('chat-input').placeholder;
+
+function resetMic() {
+  $('chat-mic').classList.remove('is-recording', 'is-busy');
+  $('chat-mic').title = 'Falar: clique, fale, clique de novo';
+  $('chat-input').placeholder = CHAT_PLACEHOLDER;
+}
+
+$('chat-mic').addEventListener('click', async () => {
+  if (chatLive) return;
+  if (!clipRecorder) {
+    try {
+      await startClip();
+    } catch {
+      toast('Não deu para acessar o microfone.');
+    }
+    return;
+  }
+
+  const blob = await stopClip();
+  $('chat-mic').classList.remove('is-recording');
+  if (!blob || blob.size < 2000) { resetMic(); toast('O recado saiu curto demais.'); return; }
+
+  $('chat-mic').classList.add('is-busy');
+  $('chat-input').placeholder = 'Transcrevendo o recado…';
+  const r = await window.api.chatTranscribe({ audio: await blob.arrayBuffer(), mimeType: blob.type });
+  resetMic();
+  if (!r.ok) { toast(r.message); return; }
+  if (!r.text) { toast('Não entendi nada no recado — tente de novo, mais perto do microfone.'); return; }
+
+  $('chat-input').value = r.text;
+  if (voiceMode) $('chat-form').requestSubmit();
+  else $('chat-input').focus();
+});
+
+$('chat-mute').addEventListener('click', stopSpeaking);
+
+$('chat-voice').addEventListener('change', (e) => {
+  voiceMode = e.target.checked;
+  if (!voiceMode) stopSpeaking();
+  else if (!('speechSynthesis' in window)) toast('Este sistema não tem síntese de voz; o recado ainda vira texto.');
+});
 
 $('chat-bypass').addEventListener('change', async (e) => {
   const ligar = e.target.checked;
@@ -930,6 +1096,7 @@ function renderSettings() {
   }
   renderPromptChoices();
   renderUpdateVersion();
+  renderTtsSettings();
   const isNative = engines.active === 'native';
   for (const b of $('set-engine').children) {
     b.classList.toggle('is-active', b.dataset.engine === engines.active);
@@ -972,6 +1139,45 @@ $('set-steps').addEventListener('change', async (e) => {
   settings = await window.api.setSettings({
     steps: { ...settings.steps, [input.dataset.step]: input.checked },
   });
+});
+
+// --- Voz do assistente -----------------------------------------------------------------
+
+let ttsOptions = null;
+
+async function renderTtsSettings() {
+  if (!ttsOptions) ttsOptions = await window.api.ttsOptions();
+  const cfg = settings.tts || {};
+  const neural = cfg.engine !== 'system';
+  for (const b of $('set-tts-engine').children) {
+    b.classList.toggle('is-active', b.dataset.engine === (neural ? 'neural' : 'system'));
+  }
+  $('set-tts-engine-desc').textContent = neural
+    ? 'vozes neurais do Edge — entonação natural, precisa de internet'
+    : 'voz instalada no sistema — funciona sem internet';
+  const voz = $('set-tts-voice');
+  voz.replaceChildren(...ttsOptions.voices.map((v) => new Option(v.label, v.id)));
+  voz.value = cfg.voice;
+  const rate = $('set-tts-rate');
+  rate.replaceChildren(...ttsOptions.rates.map((r) => new Option(r.label, r.id)));
+  rate.value = cfg.rate;
+  $('set-tts-voice-row').hidden = !neural;
+  $('set-tts-rate-row').hidden = !neural;
+}
+
+async function saveTts(patch) {
+  settings = await window.api.setSettings({ tts: { ...settings.tts, ...patch } });
+  renderTtsSettings();
+}
+
+$('set-tts-engine').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-engine]');
+  if (b) saveTts({ engine: b.dataset.engine });
+});
+$('set-tts-voice').addEventListener('change', () => saveTts({ voice: $('set-tts-voice').value }));
+$('set-tts-rate').addEventListener('change', () => saveTts({ rate: $('set-tts-rate').value }));
+$('set-tts-sample').addEventListener('click', () => {
+  speak('Olá! Na última reunião ficou combinado repetir o teste de onboarding na quinta. Quer que eu crie a tarefa?');
 });
 
 // --- Atualização do app -----------------------------------------------------------------

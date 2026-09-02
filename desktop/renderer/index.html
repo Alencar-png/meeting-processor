@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'" />
+        content="default-src 'self'; img-src 'self' data:; media-src 'self' blob:; script-src 'self'; style-src 'self'" />
   <title>Synapse</title>
   <link rel="icon" href="../assets/icon.png" />
   <link rel="stylesheet" href="styles.css" />
@@ -211,6 +211,11 @@
                 <span class="chat-where-label">trabalhando em</span>
                 <span class="chat-where-path" id="chat-workdir">—</span>
               </div>
+              <label class="chat-mode" id="chat-voice-mode"
+                     title="Ligado, o que você fala vai direto como mensagem e a resposta é lida em voz alta">
+                <input class="switch" type="checkbox" id="chat-voice" />
+                <span>Voz</span>
+              </label>
               <label class="chat-mode" id="chat-mode"
                      title="Ligado, o Claude lê, escreve e executa comandos nesta máquina sem pedir permissão">
                 <input class="switch danger" type="checkbox" id="chat-bypass" />
@@ -220,8 +225,12 @@
             </div>
             <div class="chat-thread" id="chat-thread"></div>
             <form class="chat-bar" id="chat-form">
+              <button class="icon-btn chat-mic" id="chat-mic" type="button"
+                      title="Falar: clique, fale, clique de novo" aria-label="Gravar recado de voz">🎙</button>
               <input class="input chat-input" id="chat-input" type="text" autocomplete="off"
                      placeholder="Pergunte sobre o projeto ou peça algo — o Claude tem as reuniões e as tarefas à mão" />
+              <button class="icon-btn" id="chat-mute" type="button" hidden title="Parar de ler"
+                      aria-label="Parar a leitura em voz alta">🔇</button>
               <button class="btn ghost" id="chat-stop" type="button" hidden>Parar</button>
               <button class="btn solid" id="chat-send" type="submit">Enviar</button>
             </form>
@@ -303,6 +312,31 @@
                   <select class="input" id="set-prompt-kind" aria-label="Qual prompt"></select>
                   <button class="btn ghost" id="set-prompt-open" type="button">Ver e editar</button>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head"><h2>Voz do assistente</h2></div>
+            <p class="set-lead">Como o chat lê as respostas quando o modo Voz está ligado. A voz
+               neural tem entonação de fala de verdade, mas precisa de internet na hora; sem
+               conexão, o app usa a voz do sistema sozinho.</p>
+            <div class="set-row">
+              <div class="set-info"><strong>Motor</strong><span id="set-tts-engine-desc">—</span></div>
+              <div class="seg" id="set-tts-engine">
+                <button type="button" data-engine="neural">Neural · Edge</button>
+                <button type="button" data-engine="system">Sistema · offline</button>
+              </div>
+            </div>
+            <div class="set-row" id="set-tts-voice-row">
+              <div class="set-info"><strong>Voz</strong><span>voz neural em português do Brasil</span></div>
+              <select class="input" id="set-tts-voice"></select>
+            </div>
+            <div class="set-row" id="set-tts-rate-row">
+              <div class="set-info"><strong>Velocidade</strong><span>ritmo da leitura</span></div>
+              <div class="set-btns">
+                <select class="input" id="set-tts-rate"></select>
+                <button class="btn ghost" id="set-tts-sample" type="button">Ouvir amostra</button>
               </div>
             </div>
           </div>

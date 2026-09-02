@@ -9,6 +9,7 @@ import subprocess
 import threading
 from pathlib import Path
 
+from .cleanup import clean_segments
 from .config import Settings
 from .models import Transcript, TranscriptSegment
 from .utils import parse_timestamp
@@ -87,9 +88,34 @@ def resolve_whisper_model(config: Settings) -> Path | None:
 
     models_dir = Path(config.project_root) / ".models"
     if models_dir.is_dir():
-        models = sorted(models_dir.glob("*.bin"))
+        # O modelo de VAD também é .bin, mas não transcreve nada.
+        models = sorted(p for p in models_dir.glob("*.bin") if not is_vad_model(p))
         if models:
             return models[0]
+    return None
+
+
+def is_vad_model(path: Path) -> bool:
+    """O Silero VAD vem como ``ggml-silero-*.bin`` — mesmo formato, outro papel."""
+    return "silero" in path.name.lower() or "vad" in path.name.lower()
+
+
+def resolve_vad_model(config: Settings) -> Path | None:
+    """Localiza o modelo de detecção de voz, se houver.
+
+    Ordem: caminho explícito na config -> primeiro ``ggml-silero*.bin`` em
+    .models/. Sem ele, a transcrição segue sem VAD.
+    """
+    if config.whisper_vad_model_path:
+        p = Path(config.whisper_vad_model_path).expanduser()
+        if p.exists():
+            return p
+
+    models_dir = Path(config.project_root) / ".models"
+    if models_dir.is_dir():
+        candidates = sorted(p for p in models_dir.glob("*.bin") if is_vad_model(p))
+        if candidates:
+            return candidates[0]
     return None
 
 
@@ -187,10 +213,21 @@ class WhisperTranscriber:
                     )
                 )
 
+        return self._finish(segments, progress_callback)
+
+    def _finish(self, segments: list[TranscriptSegment], progress_callback=None) -> Transcript:
+        """Fecha a transcrição: limpa alucinações e monta o Transcript."""
+        segments, report = clean_segments(segments)
+        if report.total:
+            logger.info("Limpeza da transcrição: %s", report.describe())
+
         duration = segments[-1].end if segments else 0.0
         full_text = " ".join(seg.text for seg in segments)
         if progress_callback:
-            progress_callback(100, f"{len(segments)} segmentos, {duration/60:.1f} min")
+            detalhe = f"{len(segments)} segmentos, {duration/60:.1f} min"
+            if report.total:
+                detalhe += f" · {report.describe()}"
+            progress_callback(100, detalhe)
         logger.info(
             "Transcrição concluída: %d segmentos, %.1f minutos.",
             len(segments),
@@ -330,6 +367,16 @@ class WhisperTranscriber:
         # device=cpu força o uso de CPU explicitamente.
         if self._resolve_device() == "cpu":
             cmd.append("--no-gpu")
+        # VAD: o modelo só vê os trechos com fala. Sem isso, no silêncio de uma
+        # sala esperando gente entrar ele inventa "Tchau." quinze vezes.
+        vad_model = resolve_vad_model(self.config) if self.config.whisper_vad else None
+        if vad_model is not None:
+            cmd += ["--vad", "--vad-model", str(vad_model)]
+            logger.info("VAD ligado: %s", vad_model.name)
+        elif self.config.whisper_vad:
+            logger.info("VAD pedido mas sem modelo Silero em .models/; seguindo sem VAD.")
+        if self.config.whisper_suppress_nst:
+            cmd.append("--suppress-nst")
         if progress_callback:
             # Progresso real da etapa mais longa do pipeline, em vez de uma
             # barra parada do começo ao fim.
@@ -364,21 +411,4 @@ class WhisperTranscriber:
             if text:
                 segments.append(TranscriptSegment(start=t0, end=t1, text=text))
 
-        duration = segments[-1].end if segments else 0.0
-        full_text = " ".join(seg.text for seg in segments)
-
-        if progress_callback:
-            progress_callback(100, f"{len(segments)} segmentos, {duration/60:.1f} min")
-
-        logger.info(
-            "Transcrição concluída: %d segmentos, %.1f minutos.",
-            len(segments),
-            duration / 60,
-        )
-
-        return Transcript(
-            segments=segments,
-            full_text=full_text,
-            language=self.config.whisper_language,
-            duration=duration,
-        )
+        return self._finish(segments, progress_callback)

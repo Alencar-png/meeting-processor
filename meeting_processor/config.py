@@ -30,6 +30,14 @@ class Settings(BaseModel):
     # O padrão do próprio whisper.cpp é 4, o que desperdiça a maior parte
     # de uma CPU moderna — a transcrição é o gargalo.
     whisper_threads: int = 0
+    # Detecção de voz (VAD) no whisper.cpp: o modelo só vê os trechos com
+    # fala, e por isso deixa de inventar "Tchau." em série no silêncio. Precisa
+    # do modelo Silero (ggml-silero-*.bin) em .models/ ou no caminho abaixo;
+    # sem ele, segue sem VAD e a limpeza posterior apanha o que der.
+    whisper_vad: bool = True
+    whisper_vad_model_path: str = ""
+    # Suprime tokens que não são fala ([MÚSICA], [APLAUSOS] etc.).
+    whisper_suppress_nst: bool = True
 
     # Processamento
     temp_dir: str = ".tmp"
@@ -113,6 +121,12 @@ def load_config(config_path: str | None = None) -> Settings:
         if env_val is not None and env_val != "":
             config_data[config_key] = env_val
 
+    string_overrides["MEETING_WHISPER_VAD_MODEL_PATH"] = "whisper_vad_model_path"
+    for env_key, config_key in {"MEETING_WHISPER_VAD_MODEL_PATH": "whisper_vad_model_path"}.items():
+        env_val = os.environ.get(env_key)
+        if env_val is not None and env_val != "":
+            config_data[config_key] = env_val
+
     int_overrides = {"MEETING_WHISPER_THREADS": "whisper_threads"}
     for env_key, config_key in int_overrides.items():
         env_val = os.environ.get(env_key)
@@ -121,6 +135,15 @@ def load_config(config_path: str | None = None) -> Settings:
                 config_data[config_key] = int(env_val)
             except ValueError:
                 pass
+
+    bool_overrides = {
+        "MEETING_WHISPER_VAD": "whisper_vad",
+        "MEETING_WHISPER_SUPPRESS_NST": "whisper_suppress_nst",
+    }
+    for env_key, config_key in bool_overrides.items():
+        env_val = os.environ.get(env_key)
+        if env_val is not None and env_val != "":
+            config_data[config_key] = env_val.strip().lower() in ("1", "true", "yes", "sim", "on")
 
     config_data["project_root"] = str(project_root)
 

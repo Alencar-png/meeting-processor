@@ -19,6 +19,13 @@ whisper_initial_prompt: "Transcrição de reunião em português brasileiro."
 # 0 => todos os núcleos. O padrão do whisper.cpp é 4, o que desperdiça
 # a maior parte de uma CPU moderna.
 whisper_threads: 0
+# Detecção de voz: o modelo só transcreve trechos com fala, e para de
+# inventar "Tchau." em série no silêncio. Precisa de ggml-silero-*.bin em
+# .models/ (ou whisper_vad_model_path). Sem o arquivo, segue sem VAD.
+whisper_vad: true
+whisper_vad_model_path: ""
+# Suprime tokens que não são fala ([MÚSICA], [APLAUSOS]...).
+whisper_suppress_nst: true
 
 # Timeouts de subprocess (segundos). Evitam trava permanente com arquivo
 # corrompido.

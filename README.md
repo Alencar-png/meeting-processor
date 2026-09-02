@@ -78,6 +78,11 @@ binários grandes:
 - `whisper-cli` (ou `whisper-cli.exe`) em **`.whisper-cpp/`**
 - um modelo GGML `.bin` em **`.models/`** — `ggml-large-v3-turbo.bin` é um bom
   padrão ([modelos disponíveis](https://huggingface.co/ggerganov/whisper.cpp))
+- opcional, mas recomendado: o modelo de **detecção de voz**
+  [`ggml-silero-v5.1.2.bin`](https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin)
+  (0,9 MB), também em **`.models/`**. Com ele o Whisper só vê os trechos com
+  fala e deixa de inventar "Tchau." em série nos silêncios. Sem ele, uma
+  limpeza posterior remove repetições e frases-fantasma isoladas.
 
 Como compilar o whisper.cpp com Vulkan está em
 [`desktop/README.md`](desktop/README.md). Sem esses arquivos o app ainda roda
@@ -145,6 +150,7 @@ variável de ambiente (veja [`.env.example`](.env.example)).
 | `ffmpeg não encontrado no PATH` | Instale o ffmpeg e reabra o terminal |
 | `Motor nativo indisponível` | Falta o `whisper-cli` em `.whisper-cpp/` ou o `.bin` em `.models/` |
 | Transcrição lenta | Confira se a linha "GPU: ..." aparece no progresso; sem ela está na CPU |
+| "Tchau." (ou outra frase) repetida em série na transcrição | Alucinação do Whisper no silêncio. Coloque o `ggml-silero-v5.1.2.bin` em `.models/` (VAD); a limpeza já colapsa a repetição, mas o VAD evita que ela nasça |
 | Kanban vazio depois da reunião | O aviso na tela diz o motivo; o log completo está em `meeting_processor.log` |
 | `não foi possível executar o Claude Code` | Instale o Claude Code, ou aponte `CLAUDE_BIN` para o binário |
 
@@ -162,7 +168,8 @@ meeting_processor/         # motor de transcrição (Python)
 ├── __main__.py            # CLI: transcribe
 ├── config.py              # configuração (YAML + .env)
 ├── audio.py               # extração de áudio (ffmpeg)
-├── transcriber.py         # Whisper (whisper.cpp / openai-whisper)
+├── transcriber.py         # Whisper (whisper.cpp / openai-whisper), com VAD
+├── cleanup.py             # remove alucinações: repetições em série e frases-fantasma
 ├── media_info.py          # data da gravação e duração (ffprobe)
 ├── transcript_export.py   # grava .md/.txt + meeting.json na pasta da reunião
 ├── events.py              # eventos JSONL consumidos pelo app

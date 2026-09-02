@@ -42,7 +42,9 @@ function listNativeModels(projectRoot) {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .filter((f) => f.endsWith('.bin'))
+    // O modelo de VAD (ggml-silero-*.bin) é .bin também, mas não transcreve:
+    // não entra na lista de escolha.
+    .filter((f) => f.endsWith('.bin') && !/silero|vad/i.test(f))
     .map((f) => {
       const full = path.join(dir, f);
       return {

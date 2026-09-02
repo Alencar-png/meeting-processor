@@ -237,9 +237,10 @@ def serve(speaker: Speaker) -> None:
         except json.JSONDecodeError:
             emit({"ok": False, "message": "pedido não é JSON"})
             continue
+        req_id = req.get("id")
         try:
-            def on_chunk(index, total, path, _id=req.get("id")):
-                emit({"id": _id, "event": "chunk", "index": index, "total": total, "out": str(path)})
+            def on_chunk(index, total, path):
+                emit({"id": req_id, "event": "chunk", "index": index, "total": total, "out": str(path)})
 
             seconds = speaker.speak(
                 req["text"], Path(req["out"]), req.get("ref") or None,

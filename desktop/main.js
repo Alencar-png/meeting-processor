@@ -1106,6 +1106,11 @@ const chatterbox = createChatterboxWorker({
   projectRoot: PROJECT_ROOT,
   spawn: (cmd, args, opts) => spawn(cmd, args, opts),
   log: (line) => send('job:log', line),
+  // O python.exe do venv é um lançador: derruba a árvore, não só ele.
+  killTree: (child) => {
+    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true });
+    else child.kill();
+  },
 });
 
 /** O Chatterbox fala num WAV; lemos e apagamos. Falha cai para a voz do sistema. */

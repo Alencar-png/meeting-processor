@@ -151,9 +151,15 @@ def load_model(ready: Path, device: str = "cpu"):
 class Speaker:
     """O modelo carregado, pronto para falar quantas vezes precisar."""
 
-    def __init__(self, model_dir: Path, device: str = "cpu", threads: int | None = None):
+    def __init__(self, model_dir: Path, device: str = "auto", threads: int | None = None):
         import torch
 
+        # "auto": a GPU quando o PyTorch a enxerga (CUDA, ou ROCm que se
+        # apresenta como CUDA), senão a CPU.
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = device
+        self.device_name = torch.cuda.get_device_name(0) if device == "cuda" else "CPU"
         # Metade dos processadores lógicos ≈ núcleos físicos: com SMT, 8 threads
         # geraram 30% mais rápido que 16 nesta classe de CPU.
         torch.set_num_threads(threads or max(1, (os.cpu_count() or 8) // 2))
@@ -198,7 +204,12 @@ class Speaker:
 
 
 def serve(speaker: Speaker) -> None:
-    emit({"event": "ready", "load_seconds": round(speaker.load_seconds, 1), "sr": speaker.model.sr})
+    emit({
+        "event": "ready",
+        "load_seconds": round(speaker.load_seconds, 1),
+        "sr": speaker.model.sr,
+        "device": speaker.device_name,
+    })
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -238,7 +249,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Chatterbox pt-BR: texto → fala, offline.")
     parser.add_argument("--model-dir", required=True, help="pasta com os pesos baixados")
     parser.add_argument("--download", action="store_true", help="baixa os pesos para --model-dir e sai")
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default="auto", help="auto | cuda | cpu")
     parser.add_argument("--threads", type=int, default=0)
     parser.add_argument("--serve", action="store_true", help="atende pedidos por stdin (JSON por linha)")
     parser.add_argument("--text-file", help="texto a falar (modo único)")
@@ -272,7 +283,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("sem --serve, informe --text-file e --out")
     text = Path(args.text_file).read_text(encoding="utf-8")
     seconds = speaker.speak(text, Path(args.out), args.ref or None, args.exaggeration, args.cfg)
-    emit({"ok": True, "out": args.out, "seconds": round(seconds, 1), "load_seconds": round(speaker.load_seconds, 1)})
+    emit({
+        "ok": True, "out": args.out, "seconds": round(seconds, 1),
+        "load_seconds": round(speaker.load_seconds, 1), "device": speaker.device_name,
+    })
     return 0
 
 

@@ -19,14 +19,19 @@ const fs = require('node:fs');
 const IDLE_MS = 10 * 60 * 1000;      // dez minutos sem falar: libera a memória
 const READY_TIMEOUT_MS = 5 * 60 * 1000;   // carga em CPU fria pode passar de um minuto
 
-const PYTHON_REL = path.join('.venv-tts', 'Scripts', 'python.exe');
-const PYTHON_REL_POSIX = path.join('.venv-tts', 'bin', 'python');
+// O ambiente com GPU (ROCm/CUDA) tem preferência sobre o de CPU, quando existe.
+const PYTHON_CANDIDATES = [
+  path.join('.venv-tts-gpu', 'Scripts', 'python.exe'),
+  path.join('.venv-tts-gpu', 'bin', 'python'),
+  path.join('.venv-tts', 'Scripts', 'python.exe'),
+  path.join('.venv-tts', 'bin', 'python'),
+];
 const MODEL_REL = path.join('.models', 'chatterbox-pt-br');
 const REQUIRED_WEIGHTS = ['t3_pt_br.safetensors', 's3gen_v3.pt', 've.pt', 'grapheme_mtl_merged_expanded_v1.json'];
 
 /** O que falta para o Chatterbox funcionar nesta máquina, se faltar algo. */
 function chatterboxStatus(projectRoot) {
-  const python = [path.join(projectRoot, PYTHON_REL), path.join(projectRoot, PYTHON_REL_POSIX)]
+  const python = PYTHON_CANDIDATES.map((rel) => path.join(projectRoot, rel))
     .find((p) => fs.existsSync(p)) || null;
   const modelDir = path.join(projectRoot, MODEL_REL);
   const missing = REQUIRED_WEIGHTS.filter((f) => !fs.existsSync(path.join(modelDir, f)));
@@ -45,6 +50,10 @@ function createChatterboxWorker({
   log = () => {},
   setTimer = setTimeout,
   clearTimer = clearTimeout,
+  // No Windows o python.exe de um venv é um lançador que cria o interpretador
+  // de verdade como filho: matar só o pai deixaria 4 GB órfãos. Quem chama
+  // pode passar um killTree (taskkill /t); o padrão serve para os testes.
+  killTree = (c) => c.kill(),
 }) {
   let child = null;
   let ready = null;          // Promise que resolve quando o modelo carregou
@@ -52,6 +61,7 @@ function createChatterboxWorker({
   const pending = new Map(); // id → { resolve }
   let idleTimer = null;
   let loadSeconds = 0;
+  let device = '';
 
   function armIdle() {
     if (idleTimer) clearTimer(idleTimer);
@@ -72,7 +82,7 @@ function createChatterboxWorker({
     ready = null;
     failAll('O worker de voz foi encerrado.');
     try { c.stdin.end(); } catch { /* já fechado */ }
-    try { c.kill(); } catch { /* já morto */ }
+    try { killTree(c); } catch { /* já morto */ }
   }
 
   function handleLine(line) {
@@ -84,7 +94,10 @@ function createChatterboxWorker({
       resolve(msg);
       return;
     }
-    if (msg.event === 'ready') loadSeconds = Number(msg.load_seconds) || 0;
+    if (msg.event === 'ready') {
+      loadSeconds = Number(msg.load_seconds) || 0;
+      device = String(msg.device || '');
+    }
   }
 
   function start() {
@@ -98,7 +111,7 @@ function createChatterboxWorker({
     const threads = Math.max(1, Math.floor(require('node:os').cpus().length / 2));
     const args = [
       '-m', 'meeting_processor.tts_chatterbox', '--model-dir', status.modelDir,
-      '--threads', String(threads), '--serve',
+      '--threads', String(threads), '--device', 'auto', '--serve',
     ];
     child = spawn(status.python, args, { cwd: projectRoot, windowsHide: true });
     const started = child;
@@ -166,7 +179,7 @@ function createChatterboxWorker({
   return {
     speak,
     stop,
-    status: () => ({ ...chatterboxStatus(projectRoot), running: Boolean(child), loadSeconds }),
+    status: () => ({ ...chatterboxStatus(projectRoot), running: Boolean(child), loadSeconds, device }),
   };
 }
 

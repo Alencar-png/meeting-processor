@@ -1211,7 +1211,7 @@ async function renderTtsSettings() {
     ? 'vozes neurais do Edge: entonação natural, precisa de internet'
     : cb
       ? (cbStatus.ok
-        ? `Chatterbox V3 pt-BR: entonação natural, offline, lento na CPU${cbStatus.running ? ' · carregado' : ''}`
+        ? `Chatterbox V3 pt-BR: entonação natural, offline${cbStatus.device ? ` · ${cbStatus.device}` : ''}${cbStatus.running ? ' · carregado' : ''}`
         : cbStatus.message || 'Chatterbox não instalado')
       : 'voz instalada no Windows: instantânea, sem entonação, offline';
   $('set-tts-sample-desc').textContent = cb

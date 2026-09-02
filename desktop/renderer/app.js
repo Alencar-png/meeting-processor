@@ -1062,6 +1062,12 @@ $('chat-mic').addEventListener('click', async () => {
 
 $('chat-mute').addEventListener('click', stopSpeaking);
 
+window.api.on('tts:event', (ev) => {
+  if (ev.kind === 'loading') {
+    toast('Carregando o Chatterbox pela primeira vez — leva cerca de meio minuto; depois cada frase leva alguns segundos.');
+  }
+});
+
 $('chat-voice').addEventListener('change', (e) => {
   voiceMode = e.target.checked;
   if (!voiceMode) stopSpeaking();

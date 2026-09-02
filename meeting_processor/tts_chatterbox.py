@@ -162,6 +162,9 @@ class Speaker:
         self.model = load_model(ready, device)
         self.load_seconds = time.time() - t0
         self.torch = torch
+        # A voz padrão do modelo, para voltar a ela quando a referência é tirada.
+        self._default_conds = self.model.conds
+        self._ref_key: tuple[str, float] | None = None
 
     def speak(
         self,
@@ -174,12 +177,21 @@ class Speaker:
         import torchaudio
 
         t0 = time.time()
+        # Analisar o áudio de referência custa dezenas de segundos em CPU; com
+        # `audio_prompt_path` isso aconteceria a cada frase. Aqui a análise é
+        # feita uma vez por (arquivo, expressividade) e reaproveitada.
+        key = (ref, round(exaggeration, 2)) if ref else None
+        if key != self._ref_key:
+            if ref:
+                self.model.prepare_conditionals(ref, exaggeration=exaggeration)
+            else:
+                self.model.conds = self._default_conds
+            self._ref_key = key
         partes = []
         for chunk in split_text(text) or [text]:
-            kwargs = {"language_id": "pt", "exaggeration": exaggeration, "cfg_weight": cfg}
-            if ref:
-                kwargs["audio_prompt_path"] = ref
-            partes.append(self.model.generate(chunk, **kwargs))
+            partes.append(self.model.generate(
+                chunk, language_id="pt", exaggeration=exaggeration, cfg_weight=cfg,
+            ))
         wav = self.torch.cat(partes, dim=-1) if len(partes) > 1 else partes[0]
         torchaudio.save(str(out), wav, self.model.sr)
         return time.time() - t0
@@ -235,6 +247,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--exaggeration", type=float, default=0.5)
     parser.add_argument("--cfg", type=float, default=0.5)
     args = parser.parse_args(argv)
+
+    # O app manda e lê JSON em UTF-8; no Windows o Python abriria stdin/stdout
+    # em cp1252 e "não" chegaria como "nÃ£o" — na fala, inclusive.
+    for stream in (sys.stdin, sys.stdout):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
     if args.download:
         download(Path(args.model_dir))

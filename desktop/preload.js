@@ -20,6 +20,7 @@ const listeners = {
   'doc:done': new Set(),
   'update:log': new Set(),
   'chat:event': new Set(),
+  'tts:event': new Set(),
 };
 
 for (const channel of Object.keys(listeners)) {

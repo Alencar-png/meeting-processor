@@ -1110,6 +1110,8 @@ const chatterbox = createChatterboxWorker({
 
 /** O Chatterbox fala num WAV; lemos e apagamos. Falha cai para a voz do sistema. */
 async function speakWithChatterbox(text, settings) {
+  // A primeira fala carrega ~3 GB: sem aviso, parece que nada aconteceu.
+  if (!chatterbox.status().running) send('tts:event', { kind: 'loading' });
   const out = path.join(app.getPath('temp'), `synapse-fala-${Date.now()}-${process.pid}.wav`);
   const r = await chatterbox.speak({
     text, out, ref: settings.tts.refVoice || '', exaggeration: settings.tts.exaggeration,

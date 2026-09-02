@@ -116,8 +116,11 @@ sistema (offline, sem entonação). Há um terceiro motor, **Chatterbox
 Multilingual V3 pt-BR** (Resemble AI, MIT): prosódia natural e clonagem de
 voz, **offline**, 0,5B parâmetros. Ele roda na CPU (o PyTorch não usa GPU AMD
 no Windows), e isso pesa: num Ryzen 7 5700X, **~26 s para carregar** (uma
-vez, ~4 GB de RAM) e **~7 s de espera por segundo de fala** — uma resposta de
-duas frases leva quase um minuto. Com GPU NVIDIA ele fica perto do tempo
+vez, ~4 GB de RAM) e **~7 s de espera por segundo de fala** com a voz padrão
+— uma resposta de duas frases leva quase um minuto. Com **voz de referência**
+(clonagem) o custo por segundo de fala mais que dobra (~20 s), porque o
+modelo passa a condicionar em mais contexto; a análise do áudio de referência
+em si é feita uma vez e reaproveitada. Com GPU NVIDIA ele fica perto do tempo
 real. Como fixa versões próprias de torch e transformers, vive num ambiente à
 parte:
 

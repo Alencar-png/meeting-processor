@@ -107,11 +107,11 @@ def load_model(ready: Path, device: str = "cpu"):
     """
     import torch
     from chatterbox.mtl_tts import (
+        T3,
         ChatterboxMultilingualTTS,
         Conditionals,
         MTLTokenizer,
         S3Gen,
-        T3,
         T3Config,
         VoiceEncoder,
         load_safetensors,

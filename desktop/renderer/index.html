@@ -318,15 +318,13 @@
 
           <div class="card">
             <div class="card-head"><h2>Voz do assistente</h2></div>
-            <p class="set-lead">Como o chat lê as respostas quando o modo Voz está ligado. Neural (Edge)
-               tem prosódia natural mas precisa de internet; Chatterbox tem prosódia natural e roda
-               offline, na CPU, alguns segundos por frase; a voz do sistema é instantânea e sem
-               entonação. Quando o motor escolhido falha, a voz do sistema assume sozinha.</p>
+            <p class="set-lead">Como o chat lê as respostas. Quando o motor escolhido falha, a voz do
+               sistema assume sozinha.</p>
             <div class="set-row">
               <div class="set-info"><strong>Motor</strong><span id="set-tts-engine-desc">—</span></div>
               <div class="seg" id="set-tts-engine">
-                <button type="button" data-engine="neural">Neural · Edge</button>
-                <button type="button" data-engine="chatterbox">Chatterbox · offline</button>
+                <button type="button" data-engine="neural">Edge</button>
+                <button type="button" data-engine="chatterbox">Chatterbox</button>
                 <button type="button" data-engine="system">Sistema</button>
               </div>
             </div>
@@ -356,10 +354,11 @@
             </div>
             <div class="set-row" id="set-tts-rate-row">
               <div class="set-info"><strong>Velocidade</strong><span>ritmo da leitura</span></div>
-              <div class="set-btns">
-                <select class="input" id="set-tts-rate"></select>
-                <button class="btn ghost" id="set-tts-sample" type="button">Ouvir amostra</button>
-              </div>
+              <select class="input" id="set-tts-rate"></select>
+            </div>
+            <div class="set-row">
+              <div class="set-info"><strong>Amostra</strong><span id="set-tts-sample-desc">ouça o motor e a voz escolhidos</span></div>
+              <button class="btn ghost" id="set-tts-sample" type="button">Ouvir amostra</button>
             </div>
           </div>
 

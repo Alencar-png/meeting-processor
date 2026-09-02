@@ -1202,12 +1202,15 @@ async function renderTtsSettings() {
   }
   const cbStatus = ttsOptions.chatterbox || {};
   $('set-tts-engine-desc').textContent = neural
-    ? 'vozes neurais do Edge — entonação natural, precisa de internet'
+    ? 'vozes neurais do Edge: entonação natural, precisa de internet'
     : cb
       ? (cbStatus.ok
-        ? `Chatterbox V3 pt-BR — offline, na CPU: ~26 s para carregar e ~7 s de espera por segundo de fala${cbStatus.running ? ' · carregado' : ''}`
+        ? `Chatterbox V3 pt-BR: entonação natural, offline, lento na CPU${cbStatus.running ? ' · carregado' : ''}`
         : cbStatus.message || 'Chatterbox não instalado')
-      : 'voz instalada no sistema — funciona sem internet';
+      : 'voz instalada no Windows: instantânea, sem entonação, offline';
+  $('set-tts-sample-desc').textContent = cb
+    ? 'na CPU: ~26 s na primeira vez (carga) e ~7 s por segundo de fala'
+    : 'ouça o motor e a voz escolhidos';
 
   $('set-tts-voice-row').hidden = cb;
   $('set-tts-rate-row').hidden = cb;

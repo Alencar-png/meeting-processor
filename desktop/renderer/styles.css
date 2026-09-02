@@ -913,6 +913,7 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
   border-top: 1px solid var(--line-soft);
 }
 .set-row:first-of-type { border-top: 0; }
+.set-row[hidden] { display: none; }
 
 .set-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .set-info strong { font-size: 13px; font-weight: 600; }
@@ -938,6 +939,7 @@ input[type="search"]::-webkit-search-cancel-button { filter: invert(0.6); cursor
 }
 .seg button {
   padding: 6px 14px;
+  white-space: nowrap;
   background: transparent;
   border: 0;
   border-radius: 999px;

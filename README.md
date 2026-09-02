@@ -109,6 +109,31 @@ faz o `git pull`, reinstala dependências se elas mudaram e reabre o app.
 
 ---
 
+## Voz offline com o Chatterbox (opcional)
+
+O chat lê as respostas com vozes neurais do Edge (online) ou com a voz do
+sistema (offline, sem entonação). Há um terceiro motor, **Chatterbox
+Multilingual V3 pt-BR** (Resemble AI, MIT): prosódia natural e clonagem de
+voz, **offline**, 0,5B parâmetros. Ele roda na CPU (o PyTorch não usa GPU AMD
+no Windows), e isso pesa: num Ryzen 7 5700X, **~26 s para carregar** (uma
+vez, ~4 GB de RAM) e **~7 s de espera por segundo de fala** — uma resposta de
+duas frases leva quase um minuto. Com GPU NVIDIA ele fica perto do tempo
+real. Como fixa versões próprias de torch e transformers, vive num ambiente à
+parte:
+
+```powershell
+python -m venv .venv-tts
+.venv-tts\Scripts\python -m pip install "git+https://github.com/resemble-ai/chatterbox.git"
+.venv-tts\Scripts\python -m meeting_processor.tts_chatterbox --model-dir .models\chatterbox-pt-br --download
+```
+
+(O pacote do PyPI, `chatterbox-tts` 0.1.7, ainda é o V2 e não carrega o pack
+pt-BR; por isso a instalação vem do GitHub.)
+
+O download é de ~3,2 GB, em `.models/chatterbox-pt-br/` (fora do repositório).
+Depois, **Configurações → Voz do assistente → Chatterbox**. Um áudio seu de
+5 a 15 s como **voz de referência** faz o modelo falar com a sua voz.
+
 ## Os dois motores
 
 Alterne em **Configurações → Motor ativo**.
@@ -172,6 +197,7 @@ meeting_processor/         # motor de transcrição (Python)
 ├── audio.py               # extração de áudio (ffmpeg)
 ├── transcriber.py         # Whisper (whisper.cpp / openai-whisper), com VAD
 ├── cleanup.py             # remove alucinações: repetições em série e frases-fantasma
+├── tts_chatterbox.py      # voz offline (Chatterbox pt-BR): worker por stdin, roda no .venv-tts
 ├── media_info.py          # data da gravação e duração (ffprobe)
 ├── transcript_export.py   # grava .md/.txt + meeting.json na pasta da reunião
 ├── events.py              # eventos JSONL consumidos pelo app
@@ -191,7 +217,8 @@ desktop/                   # app Electron (Synapse) — veja desktop/README.md
 ├── project-chat.js        # o chat: argumentos do claude -p, system prompt do projeto, eventos
 ├── chat-messages.js       # histórico do chat por projeto (synapse.db)
 ├── voice.js               # recado de voz do chat → texto (whisper.cpp local)
-├── tts.js                 # resposta → fala com voz neural (edge-tts), sistema como fallback
+├── tts.js                 # resposta → fala: Edge neural (online), Chatterbox (offline) ou sistema
+├── chatterbox-worker.js   # mantém o worker do Chatterbox vivo; fila; desliga por ociosidade
 ├── unicode-path.js        # caminhos com acento nas duas formas do Unicode
 ├── prompts/               # prompts de extração e documentos, fora do código
 └── renderer/              # interface

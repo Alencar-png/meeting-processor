@@ -149,7 +149,15 @@ hora). Sem internet ou sem o pacote, o renderer cai para a voz do sistema
 (`speechSynthesis`, offline) e avisa uma vez. Motor, voz e velocidade ficam em
 **Configurações → Voz do assistente**, com botão de amostra — no motor do
 sistema, a lista é a das vozes instaladas no Windows. Cada resposta do
-assistente tem um 🔊 para ser lida sozinha, com ou sem o modo Voz. A Anthropic não
+assistente tem um 🔊 para ser lida sozinha, com ou sem o modo Voz.
+
+Terceiro motor, opcional: **Chatterbox Multilingual V3 pt-BR**, offline. O
+processo principal sobe um worker Python (`chatterbox-worker.js` →
+`meeting_processor/tts_chatterbox.py --serve`, no `.venv-tts`) que carrega o
+modelo uma vez e atende pedidos por stdin, um JSON por linha; dez minutos sem
+falar, o worker é derrubado para devolver ~4 GB de RAM. Em CPU leva alguns
+segundos por frase. Aceita um WAV de referência para clonar a voz e um grau de
+expressividade. O README da raiz diz como instalar. A Anthropic não
 expõe a voz do Claude como API e o modo de voz do Claude Code é só entrada, na
 interface interativa — por isso a saída de voz é esta.
 
@@ -210,7 +218,8 @@ desktop/
 ├── project-chat.js      # chat do projeto: system prompt, args do claude -p, tradução do stream
 ├── chat-messages.js     # histórico do chat (tabela chat_messages)
 ├── voice.js             # recado de voz → texto, com o whisper.cpp das reuniões
-├── tts.js               # resposta → áudio com a voz neural do Edge (edge-tts)
+├── tts.js               # resposta → áudio: Edge neural, Chatterbox ou voz do sistema
+├── chatterbox-worker.js # worker Python do Chatterbox: fila, ready, ociosidade
 ├── transcript-import.js # texto e legenda viram reunião (.txt .md .srt .vtt)
 ├── library.js           # a pasta de saída lida como biblioteca (CRUD)
 ├── db.js                # banco do workspace (SQLite) e migração dos JSONs

@@ -42,7 +42,7 @@ Status real do produto. 🟢 = pronto e verificado no app com dados reais,
 | CHAT-05 | Chat | Citar reunião utilizada | Alta | 🟡 o Claude cita no texto; as ferramentas usadas (arquivos lidos) aparecem acima da resposta |
 | CHAT-06 | Chat | Citar tarefas/cards utilizados | Alta | 🟡 idem, no texto |
 | CHAT-07 | Chat | Modo autônomo por projeto (bypass) | Alta | 🟡 interruptor no chat, desligado por padrão, com confirmação; `--dangerously-skip-permissions`; modo leitura só Read/Glob/Grep/web |
-| CHAT-08 | Chat | Conversar por voz | Alta | 🟡 microfone → whisper.cpp local (GPU, VAD) → mensagem; modo Voz envia direto e lê a resposta com voz neural do Edge (edge-tts), caindo para a voz do sistema offline; Configurações → Voz do assistente; falta verificar no app |
+| CHAT-08 | Chat | Conversar por voz | Alta | 🟡 microfone → whisper.cpp local (GPU, VAD) → mensagem; modo Voz envia direto e lê a resposta; três motores (Edge neural online, Chatterbox V3 pt-BR offline com clonagem, voz do sistema); 🔊 por resposta; falta verificar no app |
 | PRJ-07 | Projetos | Pasta de trabalho do projeto | Alta | 🟡 a casa do projeto: `synapse/` dentro dela guarda as reuniões dele (biblioteca lê várias raízes; mudar a pasta move; excluir o projeto exclui tudo dele); é o cwd do chat |
 | UI-01 | Interface | Sidebar organizada por módulos | Alta | 🟢 |
 | UI-02 | Interface | Navegação Projeto → Dashboard | Alta | 🟢 |

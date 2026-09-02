@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld('api', {
   chatTranscribe: (payload) => ipcRenderer.invoke('chat:transcribe', payload),
   ttsSpeak: (text) => ipcRenderer.invoke('tts:speak', { text }),
   ttsOptions: () => ipcRenderer.invoke('tts:options'),
+  pickVoiceRef: () => ipcRenderer.invoke('dialog:pickVoiceRef'),
   pickWorkdir: () => ipcRenderer.invoke('dialog:pickWorkdir'),
 
   // --- Sistema ---

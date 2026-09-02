@@ -962,7 +962,13 @@ async function speak(text, button = null) {
   stopSpeaking();
   setSpeakingButton(button);
   if (button) button.classList.add('is-busy');
+  // O Chatterbox leva segundos por frase (e dezenas na primeira, carregando):
+  // o botão de amostra avisa que está pensando, em vez de parecer morto.
+  const amostra = $('set-tts-sample');
+  const cbAtivo = settings?.tts?.engine === 'chatterbox';
+  if (cbAtivo) { amostra.classList.add('is-busy'); amostra.textContent = 'Gerando…'; }
   const r = await window.api.ttsSpeak(fala);
+  if (cbAtivo) { amostra.classList.remove('is-busy'); amostra.textContent = 'Ouvir amostra'; }
   if (button) button.classList.remove('is-busy');
   if (speakingButton !== button) return;   // a pessoa pediu outra coisa nesse meio-tempo
   if (r.ok && r.audio) {
@@ -1186,15 +1192,34 @@ $('set-steps').addEventListener('change', async (e) => {
 let ttsOptions = null;
 
 async function renderTtsSettings() {
-  if (!ttsOptions) ttsOptions = await window.api.ttsOptions();
+  ttsOptions = await window.api.ttsOptions();   // o estado do Chatterbox pode mudar
   const cfg = settings.tts || {};
-  const neural = cfg.engine !== 'system';
+  const engine = ['neural', 'chatterbox', 'system'].includes(cfg.engine) ? cfg.engine : 'neural';
+  const neural = engine === 'neural';
+  const cb = engine === 'chatterbox';
   for (const b of $('set-tts-engine').children) {
-    b.classList.toggle('is-active', b.dataset.engine === (neural ? 'neural' : 'system'));
+    b.classList.toggle('is-active', b.dataset.engine === engine);
   }
+  const cbStatus = ttsOptions.chatterbox || {};
   $('set-tts-engine-desc').textContent = neural
     ? 'vozes neurais do Edge — entonação natural, precisa de internet'
-    : 'voz instalada no sistema — funciona sem internet';
+    : cb
+      ? (cbStatus.ok
+        ? `Chatterbox V3 pt-BR — offline, na CPU: ~26 s para carregar e ~7 s de espera por segundo de fala${cbStatus.running ? ' · carregado' : ''}`
+        : cbStatus.message || 'Chatterbox não instalado')
+      : 'voz instalada no sistema — funciona sem internet';
+
+  $('set-tts-voice-row').hidden = cb;
+  $('set-tts-rate-row').hidden = cb;
+  $('set-tts-ref-row').hidden = !cb;
+  $('set-tts-exag-row').hidden = !cb;
+  if (cb) {
+    $('set-tts-ref').textContent = cfg.refVoice || 'voz padrão do modelo';
+    $('set-tts-ref').title = cfg.refVoice || '';
+    $('set-tts-exag').value = String(cfg.exaggeration ?? 0.5);
+    return;
+  }
+
   const voz = $('set-tts-voice');
   if (neural) {
     voz.replaceChildren(...ttsOptions.voices.map((v) => new Option(v.label, v.id)));
@@ -1240,6 +1265,12 @@ $('set-tts-rate').addEventListener('change', () => saveTts({ rate: $('set-tts-ra
 $('set-tts-sample').addEventListener('click', () => {
   speak('Olá! Na última reunião ficou combinado repetir o teste de onboarding na quinta. Quer que eu crie a tarefa?');
 });
+$('set-tts-ref-pick').addEventListener('click', async () => {
+  const file = await window.api.pickVoiceRef();
+  if (file) saveTts({ refVoice: file });
+});
+$('set-tts-ref-clear').addEventListener('click', () => saveTts({ refVoice: '' }));
+$('set-tts-exag').addEventListener('change', () => saveTts({ exaggeration: Number($('set-tts-exag').value) }));
 
 // --- Atualização do app -----------------------------------------------------------------
 

@@ -48,6 +48,7 @@ const { createUpdater } = require('./updater');
 const chatMessages = require('./chat-messages');
 const voice = require('./voice');
 const tts = require('./tts');
+const { createChatterboxWorker } = require('./chatterbox-worker');
 const {
   buildChatArgs, buildChatSystemPrompt, describeChatEvent, isMissingSession,
 } = require('./project-chat');
@@ -1101,8 +1102,31 @@ ipcMain.handle('chat:setBypass', (_e, { projectId, enabled }) =>
  * A resposta vira áudio com a voz neural. Falha devolve `fallback: true` e o
  * renderer lê com a voz do sistema — a conversa não para por falta de internet.
  */
+const chatterbox = createChatterboxWorker({
+  projectRoot: PROJECT_ROOT,
+  spawn: (cmd, args, opts) => spawn(cmd, args, opts),
+  log: (line) => send('job:log', line),
+});
+
+/** O Chatterbox fala num WAV; lemos e apagamos. Falha cai para a voz do sistema. */
+async function speakWithChatterbox(text, settings) {
+  const out = path.join(app.getPath('temp'), `synapse-fala-${Date.now()}-${process.pid}.wav`);
+  const r = await chatterbox.speak({
+    text, out, ref: settings.tts.refVoice || '', exaggeration: settings.tts.exaggeration,
+  });
+  if (!r.ok) return { ok: false, fallback: true, message: `Chatterbox indisponível: ${r.message} Usando a voz do sistema.` };
+  try {
+    return { ok: true, audio: fs.readFileSync(out), mimeType: 'audio/wav', seconds: r.seconds };
+  } catch (err) {
+    return { ok: false, fallback: true, message: `O Chatterbox não deixou o áudio (${err.message}). Usando a voz do sistema.` };
+  } finally {
+    try { fs.unlinkSync(out); } catch { /* já removido */ }
+  }
+}
+
 ipcMain.handle('tts:speak', (_e, { text }) => {
   const settings = loadSettings();
+  if (settings.tts.engine === 'chatterbox') return speakWithChatterbox(text, settings);
   if (settings.tts.engine !== 'neural') return { ok: false, fallback: true, message: '' };
   const native = nativeStatus(PROJECT_ROOT);
   return tts.synthesize({
@@ -1114,7 +1138,15 @@ ipcMain.handle('tts:speak', (_e, { text }) => {
     tmpDir: app.getPath('temp'),
   });
 });
-ipcMain.handle('tts:options', () => ({ voices: tts.VOICES, rates: tts.RATES }));
+ipcMain.handle('tts:options', () => ({ voices: tts.VOICES, rates: tts.RATES, chatterbox: chatterbox.status() }));
+ipcMain.handle('dialog:pickVoiceRef', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Voz de referência (5 a 15 segundos de fala limpa)',
+    properties: ['openFile'],
+    filters: [{ name: 'Áudio', extensions: ['wav', 'mp3', 'flac', 'ogg', 'm4a'] }],
+  });
+  return result.canceled ? null : result.filePaths[0];
+});
 
 /**
  * Recado de voz do chat vira texto — com o mesmo whisper.cpp das reuniões,
@@ -1222,7 +1254,10 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('will-quit', () => db.closeAll());
+app.on('will-quit', () => {
+  chatterbox.stop('saindo');
+  db.closeAll();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

@@ -354,8 +354,10 @@
       return {
         voices: [{ id: 'pt-BR-FranciscaNeural', label: 'Francisca — feminina, natural' }, { id: 'pt-BR-AntonioNeural', label: 'Antônio — masculina, natural' }],
         rates: [{ id: '+0%', label: 'normal' }, { id: '+5%', label: 'um pouco mais rápido' }],
+        chatterbox: { ok: false, running: false, message: 'Falta o ambiente do Chatterbox (.venv-tts).' },
       };
     },
+    async pickVoiceRef() { return 'C:\\Users\\voce\\vozes\\minha-voz.wav'; },
     async chatTranscribe() {
       await new Promise((r) => setTimeout(r, 900));
       return { ok: true, text: 'O que ficou decidido na última reunião?' };

@@ -33,18 +33,28 @@ const RATES = [
   { id: '+25%', label: 'bem mais rápido' },
 ];
 
-// `systemVoice` é o nome de uma voz instalada no sistema (a lista vem do
-// renderer, que é quem enxerga o speechSynthesis); vazio = a melhor pt-BR.
-const DEFAULT_TTS = Object.freeze({ engine: 'neural', voice: VOICES[0].id, rate: '+5%', systemVoice: '' });
+// Três motores:
+// - neural: vozes do Edge (edge-tts), online, gratuitas.
+// - chatterbox: Chatterbox Multilingual V3 pt-BR, offline, na CPU (chatterbox-worker.js).
+// - system: a voz instalada no sistema, offline, sem prosódia.
+// `systemVoice` é o nome de uma voz do sistema (a lista vem do renderer);
+// `refVoice` é um WAV de referência para o Chatterbox clonar (vazio = voz padrão).
+const ENGINES = ['neural', 'chatterbox', 'system'];
+const DEFAULT_TTS = Object.freeze({
+  engine: 'neural', voice: VOICES[0].id, rate: '+5%', systemVoice: '', refVoice: '', exaggeration: 0.5,
+});
 
 /** Completa o que falta e recusa voz ou velocidade que não existem. */
 function normalizeTts(raw) {
   const tts = { ...DEFAULT_TTS };
   if (!raw || typeof raw !== 'object') return tts;
-  if (raw.engine === 'system' || raw.engine === 'neural') tts.engine = raw.engine;
+  if (ENGINES.includes(raw.engine)) tts.engine = raw.engine;
   if (VOICES.some((v) => v.id === raw.voice)) tts.voice = raw.voice;
   if (RATES.some((r) => r.id === raw.rate)) tts.rate = raw.rate;
   if (typeof raw.systemVoice === 'string') tts.systemVoice = raw.systemVoice.slice(0, 120);
+  if (typeof raw.refVoice === 'string') tts.refVoice = raw.refVoice.slice(0, 1024);
+  const ex = Number(raw.exaggeration);
+  if (Number.isFinite(ex)) tts.exaggeration = Math.min(1, Math.max(0.25, ex));
   return tts;
 }
 
@@ -102,6 +112,7 @@ async function synthesize({ text, voice, rate, python = 'python', run, tmpDir = 
 
 module.exports = {
   DEFAULT_TTS,
+  ENGINES,
   RATES,
   VOICES,
   buildEdgeTtsArgs,

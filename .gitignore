@@ -47,3 +47,5 @@ Thumbs.db
 
 # Atalhos do Windows: guardam caminhos absolutos da máquina.
 *.lnk
+# Ambiente do Chatterbox (torch/transformers próprios)
+.venv-tts/
